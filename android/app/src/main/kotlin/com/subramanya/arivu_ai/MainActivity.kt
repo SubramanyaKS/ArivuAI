@@ -1,4 +1,4 @@
-package com.example.arivu_ai
+package com.subramanya.arivu_ai
 
 import io.flutter.embedding.android.FlutterActivity
 

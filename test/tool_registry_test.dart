@@ -15,6 +15,7 @@ void main() {
       expect(names, contains('calculator'));
       expect(names, contains('device_settings'));
       expect(names, contains('app_launcher'));
+      expect(names, contains('safety_crisis_support'));
     });
 
     test('AlarmTimerTool parses alarm phrases (colons, dots, spaces, meridians)', () async {

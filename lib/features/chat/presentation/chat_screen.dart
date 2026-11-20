@@ -1411,6 +1411,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Arivu AI runs locally on device. AI can make mistakes — verify critical facts.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      color: isDark
+                          ? const Color(0xFF64748B)
+                          : const Color(0xFF94A3B8),
+                    ),
+                  ),
                 ],
               ),
             ),

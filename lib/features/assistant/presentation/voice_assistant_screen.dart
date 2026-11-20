@@ -1,4 +1,5 @@
 import 'package:arivu_ai/tools/tool_registry.dart';
+import 'package:arivu_ai/tools/safety_tool.dart';
 import 'package:arivu_ai/features/assistant/presentation/voice_utils.dart';
 import 'dart:async';
 import 'dart:math' as math;
@@ -319,11 +320,15 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen>
     if (!mounted || runId != _speechRunId) return;
 
     if (toolResult.handled && toolResult.reply != null) {
+      final spokenReply = toolResult.toolName == 'safety_crisis_support'
+          ? SafetyTool.getSpokenCrisisResponse()
+          : toolResult.reply!;
+
       setState(() {
         _aiResponse = toolResult.reply!;
       });
 
-      _enqueueSpeech(toolResult.reply!, runId);
+      _enqueueSpeech(spokenReply, runId);
       await _speechQueue;
 
       if (mounted && runId == _speechRunId) {
