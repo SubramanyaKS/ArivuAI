@@ -39,6 +39,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   int? _currentConversationId;
   AttachedDocument? _attachedDocument;
   bool _isExtractingDocument = false;
+  final ScrollController _scrollController = ScrollController();
+  bool _isCancelled = false;
 
   final bool _modelReady = true;
   bool _isThinking = false;
@@ -87,6 +89,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         _historyError = null;
         _isHistoryReady = true;
       });
+      _scrollToBottom(animated: false);
     } catch (error, stackTrace) {
       debugPrint('Chat history loading error: $error');
       debugPrintStack(stackTrace: stackTrace);
@@ -208,6 +211,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ..addAll(messages);
         _historyError = null;
       });
+      _scrollToBottom(animated: false);
     } catch (error, stackTrace) {
       debugPrint('Conversation loading error: $error');
       debugPrintStack(stackTrace: stackTrace);
@@ -285,6 +289,40 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _scrollToBottom({bool animated = true, bool force = false}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      final target = _scrollController.position.maxScrollExtent;
+      if (animated) {
+        _scrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOutQuad,
+        );
+      } else {
+        _scrollController.jumpTo(target);
+      }
+    });
+  }
+
+  void _scrollToBottomIfNear() {
+    if (!_scrollController.hasClients) return;
+    final distanceToBottom =
+        _scrollController.position.maxScrollExtent - _scrollController.offset;
+    if (distanceToBottom < 160) {
+      _scrollToBottom(animated: true);
+    }
+  }
+
+  void _stopGeneration() {
+    if (!_isThinking) return;
+    setState(() {
+      _isCancelled = true;
+      _isThinking = false;
+      _hasResponseStarted = false;
+    });
   }
 
   Future<void> _copyMessage(String content) async {
@@ -412,6 +450,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       _messages.add(userMessage);
     });
 
+    _scrollToBottom(force: true);
     _controller.clear();
 
     try {
@@ -439,6 +478,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         _messages.add(replyMsg);
         _isThinking = false;
       });
+      _scrollToBottom(force: true);
       try {
         await _refreshConversations();
       } catch (_) {}
@@ -464,11 +504,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       );
     }
 
+    _isCancelled = false;
+
     try {
       await for (final chunk in widget.aiService.askStream(
         contextMessages,
         systemPrompt: ragSystemPrompt,
       )) {
+        if (_isCancelled) break;
         responseBuffer.write(chunk);
 
         if (responseBuffer.toString().trim().isEmpty) continue;
@@ -488,12 +531,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           }
           _hasResponseStarted = true;
         });
+
+        _scrollToBottomIfNear();
       }
 
       if (responseBuffer.toString().trim().isEmpty) {
         responseBuffer.clear();
         responseBuffer.write(
-          'Sorry, I could not generate a response. Please try again.',
+          'The AI returned an empty response. Please try rephrasing your question.',
         );
       }
     } catch (error, stackTrace) {
@@ -502,9 +547,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
       if (responseBuffer.toString().trim().isEmpty) {
         responseBuffer.clear();
-        responseBuffer.write(
-          'Sorry, I could not generate a response. Please try again.',
-        );
+        responseBuffer.write(_formatInferenceErrorMessage(error));
       }
     }
 
@@ -537,6 +580,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       _hasResponseStarted = false;
     });
 
+    _scrollToBottom();
+
     try {
       await _refreshConversations();
     } catch (error, stackTrace) {
@@ -544,6 +589,43 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       debugPrintStack(stackTrace: stackTrace);
       _showHistoryError('Chat history could not be refreshed.');
     }
+  }
+
+  String _formatInferenceErrorMessage(Object error) {
+    final str = error.toString().toLowerCase();
+
+    if (error is OutOfMemoryError ||
+        str.contains('out of memory') ||
+        str.contains('bad_alloc') ||
+        str.contains('cannot allocate') ||
+        str.contains('oom')) {
+      return '⚠️ **Device Memory Full**: The phone ran out of RAM while generating tokens.\n\n'
+          '**How to resolve:**\n'
+          '• Switch to a lighter model (such as *SmolLM2-360M* or *Qwen2.5-0.5B*) in **Settings ➔ Manage Models**.\n'
+          '• Reduce Context Window Size (e.g. 1024) in **Settings ➔ Inference Parameters**.\n'
+          '• Close unused background apps to free up system memory.';
+    }
+
+    if (str.contains('context') ||
+        str.contains('n_ctx') ||
+        str.contains('token limit') ||
+        str.contains('exceeded')) {
+      return '⚠️ **Context Window Exceeded**: The conversation or attached document exceeds the active context window limit.\n\n'
+          '**How to resolve:**\n'
+          '• Start a fresh conversation using the **+** button.\n'
+          '• Or increase the Context Size (up to 4096) in **Settings ➔ Inference Parameters**.';
+    }
+
+    if (str.contains('model has not been loaded') ||
+        str.contains('not loaded') ||
+        str.contains('null model')) {
+      return '⚠️ **Model Not Ready**: The AI model is not loaded in memory.\n\n'
+          'Please visit **Settings ➔ Manage Models** to re-activate your model, or restart the app.';
+    }
+
+    return '⚠️ **Inference Issue**: An error occurred while generating the response.\n\n'
+        'Details: ${error.toString().replaceAll('Exception: ', '').replaceAll('StateError: ', '')}\n\n'
+        'Please try asking again or starting a new chat.';
   }
 
   void _listen() async {
@@ -563,6 +645,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           onResult: (val) => setState(() {
             _controller.text = val.recognizedWords;
           }),
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Microphone access is unavailable or permission denied. Please enable microphone permission in device Settings.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
         );
       }
     } else {
@@ -605,9 +697,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   void dispose() {
+    _isCancelled = true;
     _flutterTts.stop();
     _controller.dispose();
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -938,6 +1032,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             else
               Expanded(
                 child: ListView.builder(
+                  controller: _scrollController,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 14,
                     vertical: 20,
@@ -1340,31 +1435,49 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                         width: 48,
                         height: 48,
                         decoration: BoxDecoration(
-                          color: const Color(0xFF4F46E5),
+                          color: _isThinking
+                              ? const Color(0xFFEF4444)
+                              : const Color(0xFF4F46E5),
                           borderRadius: BorderRadius.circular(24),
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(0xFF4F46E5).withValues(alpha: 0.25),
+                              color: (_isThinking
+                                      ? const Color(0xFFEF4444)
+                                      : const Color(0xFF4F46E5))
+                                  .withValues(alpha: 0.25),
                               blurRadius: 8,
                               offset: const Offset(0, 3),
                             ),
                           ],
                         ),
                         child: IconButton(
-                          tooltip: 'Send message',
+                          tooltip:
+                              _isThinking ? 'Stop generation' : 'Send message',
                           icon: Icon(
                             _isThinking
-                                ? Icons.hourglass_top_rounded
+                                ? Icons.stop_rounded
                                 : Icons.arrow_upward_rounded,
                             color: Colors.white,
                           ),
-                          onPressed:
-                              (_modelReady && _isHistoryReady && !_isThinking)
+                          onPressed: _isThinking
+                              ? _stopGeneration
+                              : ((_modelReady && _isHistoryReady)
                                   ? _sendMessage
-                                  : null,
+                                  : null),
                         ),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Arivu AI runs locally on device. AI can make mistakes — verify critical facts.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      color: isDark
+                          ? const Color(0xFF64748B)
+                          : const Color(0xFF94A3B8),
+                    ),
                   ),
                 ],
               ),

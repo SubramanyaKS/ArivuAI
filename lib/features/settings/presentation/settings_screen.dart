@@ -824,6 +824,65 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ],
             ),
           ),
+          const SizedBox(height: 12),
+          InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () => _showResponsibleAiDialog(context),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).cardColor,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.08)
+                      : const Color(0xFFE2E8F0),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF10B981).withValues(alpha: 0.15),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.health_and_safety_rounded,
+                      color: Color(0xFF10B981),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Responsible AI & Safety Guidelines',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 15,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          'View ethical boundaries, crisis lifelines, and safety practices.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF94A3B8),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: Color(0xFF94A3B8),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -871,6 +930,63 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         );
       }
     }
+  }
+
+  void _showResponsibleAiDialog(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.health_and_safety_rounded, color: Color(0xFF10B981)),
+            SizedBox(width: 10),
+            Text('Responsible AI & Safety', style: TextStyle(fontSize: 18)),
+          ],
+        ),
+        content: const SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Ethical Operating Principles',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+              SizedBox(height: 6),
+              Text(
+                '• Harm Refusal: Arivu AI strictly refuses assistance with dangerous, violent, illegal, or cyberattack activities.\n'
+                '• Professional Boundaries: Arivu AI is not a doctor, lawyer, or financial planner. Never use it for medical diagnosis or legal representation.\n'
+                '• Hallucination Awareness: As an offline model, answers can occasionally be inaccurate. Always verify critical facts.\n'
+                '• Zero Cloud Egress: Your prompts, voice recordings, and files are processed strictly on your phone CPU and never leave your device.',
+                style: TextStyle(fontSize: 12.5, height: 1.5),
+              ),
+              SizedBox(height: 16),
+              Text(
+                '24/7 Crisis Support Lifelines',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+              SizedBox(height: 6),
+              Text(
+                'If you or someone you know is in distress, free confidential help is available 24/7:\n'
+                '• India: 14416 (Tele-MANAS) / +91 9152987821 (Vandrevala)\n'
+                '• US / Canada: 988 (Suicide & Crisis Lifeline)\n'
+                '• UK: 111 (NHS Mental Health)\n'
+                '• International: findahelpline.com\n'
+                '• Emergency: 112 (EU/India) / 911 (US)',
+                style: TextStyle(fontSize: 12, height: 1.4, color: Color(0xFF64748B)),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Understood'),
+          ),
+        ],
+      ),
+    );
   }
 }
 

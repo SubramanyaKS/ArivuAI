@@ -1,4 +1,5 @@
 import 'package:arivu_ai/tools/tool_registry.dart';
+import 'package:arivu_ai/tools/safety_tool.dart';
 import 'package:arivu_ai/features/assistant/presentation/voice_utils.dart';
 import 'dart:async';
 import 'dart:math' as math;
@@ -195,7 +196,14 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen>
     if (!available) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Speech recognition is unavailable.')),
+        const SnackBar(
+          content: Text(
+            'Microphone access is unavailable or permission denied. '
+            'Please check microphone permission in device Settings.',
+          ),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ),
       );
       return;
     }
@@ -312,11 +320,15 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen>
     if (!mounted || runId != _speechRunId) return;
 
     if (toolResult.handled && toolResult.reply != null) {
+      final spokenReply = toolResult.toolName == 'safety_crisis_support'
+          ? SafetyTool.getSpokenCrisisResponse()
+          : toolResult.reply!;
+
       setState(() {
         _aiResponse = toolResult.reply!;
       });
 
-      _enqueueSpeech(toolResult.reply!, runId);
+      _enqueueSpeech(spokenReply, runId);
       await _speechQueue;
 
       if (mounted && runId == _speechRunId) {
@@ -405,9 +417,20 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen>
       debugPrint('Voice AI error: $e');
       if (!mounted || runId != _speechRunId) return;
 
+      final errStr = e.toString().toLowerCase();
+      String userError;
+      if (errStr.contains('memory') || errStr.contains('alloc') || errStr.contains('oom')) {
+        userError = 'Device memory full. Please switch to a lighter model in Settings.';
+      } else if (errStr.contains('not loaded')) {
+        userError = 'The AI model is not loaded in memory. Please re-open the app.';
+      } else {
+        userError = 'Unable to generate response. Please tap to speak again.';
+      }
+
       setState(() {
         _state = AssistantState.idle;
-        _statusMessage = 'Error generating response';
+        _statusMessage = 'Generation error';
+        _aiResponse = userError;
       });
     }
   }

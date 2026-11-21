@@ -1,4 +1,5 @@
 import 'pocket_tool.dart';
+import 'safety_tool.dart';
 import 'battery_tool.dart';
 import 'torch_tool.dart';
 import 'reminder_parser.dart';
@@ -30,6 +31,7 @@ class ToolRegistry {
   ToolRegistry._();
 
   static final List<PocketTool> _tools = [
+    const SafetyTool(),
     const TorchTool(),
     const ReminderTool(),
     const BatteryTool(),

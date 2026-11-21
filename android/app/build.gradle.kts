@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.arivu_ai"
+    namespace = "com.subramanya.arivu_ai"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -21,8 +21,7 @@ android {
     // }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.arivu_ai"
+        applicationId = "com.subramanya.arivu_ai"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 26

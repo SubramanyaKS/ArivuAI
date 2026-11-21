@@ -47,5 +47,9 @@
 		<true/>
 		<key>UIStatusBarHidden</key>
 		<false/>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>Arivu AI requires microphone access for offline voice assistant conversations.</string>
+		<key>NSSpeechRecognitionUsageDescription</key>
+		<string>Arivu AI requires speech recognition to transcribe voice input locally on your device.</string>
 	</dict>
 </plist>
