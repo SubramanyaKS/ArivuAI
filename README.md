@@ -99,9 +99,12 @@ test/      # Widget and unit tests
 assets/    # App icon and other bundled assets
 ```
 
-For the full source layout, dependency roles, runtime flows, data storage, and
-the architecture diagram, see the [developer documentation](docs/README.md)
-and [architecture guide](docs/architecture.md).
+For the full source layout, dependency roles, runtime flows, data storage,
+the architecture diagram, and on-device performance metrics, see:
+- [Developer Documentation](docs/README.md)
+- [Architecture Guide](docs/architecture.md)
+- [On-Device Model Benchmarks](docs/BENCHMARKS.md)
+- [Next-Phase Roadmap (v2.0+)](docs/NEXT_PHASE_ROADMAP.md)
 
 
 ## Roadmap

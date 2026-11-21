@@ -18,7 +18,7 @@ class ChatDatabase {
 
     _database = await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -54,6 +54,16 @@ class ChatDatabase {
             is_completed INTEGER NOT NULL DEFAULT 0
           )
         ''');
+
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at)',
+        );
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at DESC)',
+        );
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_reminders_active ON reminders(is_completed, scheduled_at)',
+        );
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -66,6 +76,17 @@ class ChatDatabase {
               is_completed INTEGER NOT NULL DEFAULT 0
             )
           ''');
+        }
+        if (oldVersion < 3) {
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at)',
+          );
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at DESC)',
+          );
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_reminders_active ON reminders(is_completed, scheduled_at)',
+          );
         }
       },
     );

@@ -39,6 +39,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   int? _currentConversationId;
   AttachedDocument? _attachedDocument;
   bool _isExtractingDocument = false;
+  final ScrollController _scrollController = ScrollController();
+  bool _isCancelled = false;
 
   final bool _modelReady = true;
   bool _isThinking = false;
@@ -87,6 +89,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         _historyError = null;
         _isHistoryReady = true;
       });
+      _scrollToBottom(animated: false);
     } catch (error, stackTrace) {
       debugPrint('Chat history loading error: $error');
       debugPrintStack(stackTrace: stackTrace);
@@ -208,6 +211,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ..addAll(messages);
         _historyError = null;
       });
+      _scrollToBottom(animated: false);
     } catch (error, stackTrace) {
       debugPrint('Conversation loading error: $error');
       debugPrintStack(stackTrace: stackTrace);
@@ -285,6 +289,40 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _scrollToBottom({bool animated = true, bool force = false}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      final target = _scrollController.position.maxScrollExtent;
+      if (animated) {
+        _scrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOutQuad,
+        );
+      } else {
+        _scrollController.jumpTo(target);
+      }
+    });
+  }
+
+  void _scrollToBottomIfNear() {
+    if (!_scrollController.hasClients) return;
+    final distanceToBottom =
+        _scrollController.position.maxScrollExtent - _scrollController.offset;
+    if (distanceToBottom < 160) {
+      _scrollToBottom(animated: true);
+    }
+  }
+
+  void _stopGeneration() {
+    if (!_isThinking) return;
+    setState(() {
+      _isCancelled = true;
+      _isThinking = false;
+      _hasResponseStarted = false;
+    });
   }
 
   Future<void> _copyMessage(String content) async {
@@ -412,6 +450,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       _messages.add(userMessage);
     });
 
+    _scrollToBottom(force: true);
     _controller.clear();
 
     try {
@@ -439,6 +478,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         _messages.add(replyMsg);
         _isThinking = false;
       });
+      _scrollToBottom(force: true);
       try {
         await _refreshConversations();
       } catch (_) {}
@@ -464,11 +504,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       );
     }
 
+    _isCancelled = false;
+
     try {
       await for (final chunk in widget.aiService.askStream(
         contextMessages,
         systemPrompt: ragSystemPrompt,
       )) {
+        if (_isCancelled) break;
         responseBuffer.write(chunk);
 
         if (responseBuffer.toString().trim().isEmpty) continue;
@@ -488,6 +531,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           }
           _hasResponseStarted = true;
         });
+
+        _scrollToBottomIfNear();
       }
 
       if (responseBuffer.toString().trim().isEmpty) {
@@ -534,6 +579,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       _isThinking = false;
       _hasResponseStarted = false;
     });
+
+    _scrollToBottom();
 
     try {
       await _refreshConversations();
@@ -650,9 +697,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   void dispose() {
+    _isCancelled = true;
     _flutterTts.stop();
     _controller.dispose();
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -983,6 +1032,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             else
               Expanded(
                 child: ListView.builder(
+                  controller: _scrollController,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 14,
                     vertical: 20,
@@ -1385,28 +1435,35 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                         width: 48,
                         height: 48,
                         decoration: BoxDecoration(
-                          color: const Color(0xFF4F46E5),
+                          color: _isThinking
+                              ? const Color(0xFFEF4444)
+                              : const Color(0xFF4F46E5),
                           borderRadius: BorderRadius.circular(24),
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(0xFF4F46E5).withValues(alpha: 0.25),
+                              color: (_isThinking
+                                      ? const Color(0xFFEF4444)
+                                      : const Color(0xFF4F46E5))
+                                  .withValues(alpha: 0.25),
                               blurRadius: 8,
                               offset: const Offset(0, 3),
                             ),
                           ],
                         ),
                         child: IconButton(
-                          tooltip: 'Send message',
+                          tooltip:
+                              _isThinking ? 'Stop generation' : 'Send message',
                           icon: Icon(
                             _isThinking
-                                ? Icons.hourglass_top_rounded
+                                ? Icons.stop_rounded
                                 : Icons.arrow_upward_rounded,
                             color: Colors.white,
                           ),
-                          onPressed:
-                              (_modelReady && _isHistoryReady && !_isThinking)
+                          onPressed: _isThinking
+                              ? _stopGeneration
+                              : ((_modelReady && _isHistoryReady)
                                   ? _sendMessage
-                                  : null,
+                                  : null),
                         ),
                       ),
                     ],
