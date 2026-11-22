@@ -26,18 +26,21 @@ The app boots with an on-device language model (supporting SmolLM2-360M, SmolLM2
 
 ## Features
 
-- **Local-first AI Chat**: Real-time streaming token generation with full SQLite conversation history persistence.
+- **Local-first AI Chat & Conversational Ergonomics**: Real-time streaming token generation with intelligent auto-scroll, interactive **Stop Generation** button, **Regenerate Response**, **Edit Prompt** (with automatic downstream history truncation), and B-tree indexed SQLite persistence.
 - **Voice Assistant & Hands-Free Mode**: Conversational voice pipeline (STT ➔ on-device LLM ➔ low-latency streaming TTS) with an animated glowing orb, rotating ambient rings, live audio waveform equalizer, and auto-continuous hands-free loop with silence detection and tap-to-interrupt.
-- **Offline Device Action Tools & Registry**:
-  - 🧩 **Central Tool Registry**: Unified, extensible architecture (`PocketTool` contract + `ToolRegistry`) dispatching instant device commands without LLM latency or hallucination.
-  - ⏰ **Native Android Clock Alarms & Timers**: Set, stop, or dismiss system alarms and countdown timers in the phone's native Clock app via Android intents (*"Set an alarm for 7:30 AM"*, *"Stop the alarm"*, *"Set a timer for 15 minutes"*, *"Cancel timer"*).
+- **Two-Tier Hybrid Device Action Tools & Registry**:
+  - 🧩 **Hybrid Tool Pipeline (`ToolRegistry` + `NlpNormalizer` + `ToolCallParser`)**: Tier 1 pre-processes colloquial speech and word numbers (*"half past six"*, *"quarter to eight"*, *"ten minutes"*) for `<1ms` deterministic execution; Tier 2 falls back seamlessly to structured `<tool_call>` local LLM extraction with auto-repairing JSON parsing for complex phrasing.
+  - ⏰ **Native Android Clock Alarms & Timers**: Set, stop, or dismiss system alarms and countdown timers in the phone's native Clock app via Android intents (*"Set an alarm for 7:30 AM"*, *"Wake me up at quarter to eight"*, *"Stop the alarm"*, *"Set a timer for 15 minutes"*).
   - 🔋 **Battery Diagnostics**: Check live battery percentage and charging status completely offline (*"What's my battery percentage?"*, *"Check battery status"*).
   - 🔦 **Flashlight / Torch Control**: Turn on, turn off, or toggle the device flashlight completely offline (*"Turn on flashlight"*, *"Flashlight off"*).
-  - 📅 **Scheduled Reminders**: Natural language reminder alerts scheduled with `flutter_local_notifications` and persisted to SQLite (*"Remind me to drink water in 10 minutes"*).
+  - 📅 **Full Offline Reminder Management**: Create, list, and cancel personal reminders scheduled with `flutter_local_notifications` and persisted to SQLite (*"Remind me to drink water in 10 minutes"*, *"Give me the list of reminders"*, *"Cancel reminder to drink water"*, *"Cancel all reminders"*).
   - 🧮 **Deterministic Offline Calculator**: Exact arithmetic evaluation, percentages, powers, and roots evaluated in <1ms without LLM hallucination (*"What is 15% of 80?"*, *"Calculate 1500 / 12"*, *"2 to the power of 8"*).
   - 🚀 **Application Launcher**: Instant app opening via Android intents (*"Open YouTube"*, *"Launch Camera"*, *"Open WhatsApp"*, *"Open Maps"*, *"Open Browser"*, *"Open Spotify"*).
   - ⚙️ **System Settings Shortcuts**: Direct navigation to Android settings panels without searching (*"Open Wi-Fi settings"*, *"Open Bluetooth"*, *"Open Display settings"*, *"Volume settings"*).
-- **Offline Document Chat (Local RAG)**: Attach local `.pdf`, `.txt`, and `.md` files directly into chat via the paperclip button. The app extracts text using pure Dart `syncfusion_flutter_pdf`, chunks text semantically with overlap, and performs instant in-memory BM25 relevance retrieval to ground LLM answers with zero network calls and zero cloud leaks.
+- **Dedicated Document Intelligence Workspace (Offline RAG & Knowledge Shelf)**:
+  - 📚 **Persistent Knowledge Shelf**: Upload and persist `.pdf`, `.txt`, and `.md` files locally in SQLite so documents remain available across sessions.
+  - ⚡ **One-Tap Document Actions**: Instantly generate an *Executive Summary*, *Key Takeaways*, *Q&A Study Flashcards*, or *Action Items* with a single tap.
+  - 🔍 **2-Tab Workspace & Tappable Citations**: Chat with grounded local BM25 RAG on one tab (with tappable `Source: Excerpt N` chips that open verbatim text previews) and search/read extracted document sections offline on the Viewer tab. Also supports quick ad-hoc attachments directly inside regular chat.
 - **Inference Parameters & Hardware Tuning**: Fine-tune CPU generation threads (1, 2, 4, 6, 8), sampling temperature (0.0 to 1.0 with Strict/Balanced/Creative badge), context window size (1024, 2048, 4096 tokens), and max generation tokens (128, 256, 512, 1024) directly from Settings. Parameter modifications are persisted to disk (`inference_config.json`), dynamically re-applied to active models without app restart, and support a one-tap "Reset Defaults" action.
 - **Conversation Search & Chat Export**: Instant keyword search across chat titles and message contents in the history drawer with message snippet previews. Export conversations as Markdown (`.md`) files, copy formatted transcripts to clipboard, or share conversations directly through the native system share sheet.
 - **Multi-Model Manager & Storage Control**: Select, hot-swap, and delete models on-device (SmolLM2-360M, SmolLM2-1.7B, Qwen2.5-0.5B, Qwen3-0.6B, Qwen2.5-1.5B). Inactive models stay on disk for instant offline switching, with one-tap deletion from Settings to reclaim phone storage. Model catalog is decoupled into `assets/models/model_catalog.json` as the single source of truth.
@@ -121,6 +124,9 @@ Arivu AI is actively evolving towards a full-featured offline assistant:
 - [x] **Markdown & Code Highlighting**: Rich formatting, syntax highlighting, language badges, and one-tap copy button in chat.
 - [x] **Conversation Search & Chat Export**: Search past chat titles and messages with snippet previews; export conversations as Markdown (`.md`) or share via system share sheet.
 - [x] **Inference Parameters & Hardware Tuning**: Fine-tune CPU generation threads, sampling temperature slider, context window size, and max generation token limits directly in Settings with live dynamic reload.
+- [x] **Chat Ergonomics & Indexed Persistence**: Streaming auto-scroll, Stop Generation button, Regenerate Response, Edit Prompt with SQLite truncation, and B-tree database indexing.
+- [x] **Two-Tier Hybrid Tool Calling & Full Reminder Management**: Colloquial NLP normalization (`NlpNormalizer`), structured `<tool_call>` LLM fallback (`ToolCallParser`), plus reminder listing and cancellation.
+- [x] **Dedicated Document Intelligence Workspace**: Persistent SQLite Knowledge Shelf, 2-tab Ask/Viewer workspace, one-tap Summary/Takeaways/Q&A/Action Items, and tappable source citation previews.
 
 ## Model behavior & Storage
 

@@ -547,4 +547,56 @@ Strict Operating Rules:
       }
     }
   }
+
+  /// Single-turn inference for internal agentic tasks like structured tool extraction.
+  Future<String> askOnce(
+    String prompt, {
+    String? systemPrompt,
+    int maxTokens = 80,
+    double temperature = 0.1,
+  }) async {
+    final buffer = StringBuffer();
+    await for (final chunk in askStream(
+      [
+        ChatMessage(
+          conversationId: -1,
+          role: 'user',
+          content: prompt,
+          createdAt: DateTime.now(),
+        ),
+      ],
+      systemPrompt: systemPrompt,
+      maxTokens: maxTokens,
+      temperature: temperature,
+    )) {
+      buffer.write(chunk);
+    }
+    return buffer.toString().trim();
+  }
+
+  /// Builds a compact tool-calling system prompt for local LLMs.
+  static String buildToolSystemPrompt(List<Map<String, dynamic>> tools) {
+    final buffer = StringBuffer();
+    buffer.writeln(
+      'You are an offline device tool router. Current time: ${DateTime.now().toIso8601String()}.',
+    );
+    buffer.writeln('Available tools:');
+    for (final t in tools) {
+      final name = t['name'];
+      final desc = t['description'];
+      final params =
+          t['parameters']?['properties'] as Map<String, dynamic>? ?? {};
+      final paramNames = params.keys.join(', ');
+      buffer.writeln('- $name($paramNames): $desc');
+    }
+    buffer.writeln();
+    buffer.writeln('INSTRUCTIONS:');
+    buffer.writeln('If the user request matches a tool, respond ONLY with:');
+    buffer.writeln(
+      '<tool_call>{"name": "TOOL_NAME", "arguments": { ... }}</tool_call>',
+    );
+    buffer.writeln('If no tool is needed or appropriate, respond with "NO_TOOL".');
+    buffer.writeln('Do NOT add any commentary or extra text.');
+    return buffer.toString();
+  }
 }

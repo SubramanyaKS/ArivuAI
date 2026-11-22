@@ -36,6 +36,13 @@ class CalculatorTool implements PocketTool {
     return result;
   }
 
+  @override
+  Future<String?> executeWithArgs(Map<String, dynamic> args) async {
+    final expr = args['expression']?.toString();
+    if (expr == null || expr.trim().isEmpty) return null;
+    return evaluateQuery(expr);
+  }
+
   /// Evaluates a user prompt and returns a formatted result string, or null if not a calculation.
   static String? evaluateQuery(String query) {
     var text = query.trim().toLowerCase();

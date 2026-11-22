@@ -44,6 +44,13 @@ class DeviceSettingsTool implements PocketTool {
     return await openSetting(setting);
   }
 
+  @override
+  Future<String?> executeWithArgs(Map<String, dynamic> args) async {
+    final setting = args['setting']?.toString();
+    if (setting == null || setting.trim().isEmpty) return null;
+    return await openSetting(setting.trim().toLowerCase());
+  }
+
   /// Matches user prompts to supported system setting types.
   static String? matchSetting(String query) {
     final text = query

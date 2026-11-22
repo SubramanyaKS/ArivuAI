@@ -77,4 +77,7 @@ class SafetyTool implements PocketTool {
     }
     return null;
   }
+
+  @override
+  Future<String?> executeWithArgs(Map<String, dynamic> args) async => null;
 }

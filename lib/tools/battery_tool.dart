@@ -109,4 +109,7 @@ class BatteryTool implements PocketTool {
 
   @override
   Future<String?> tryExecute(String prompt) => tryExecuteBattery(prompt);
+
+  @override
+  Future<String?> executeWithArgs(Map<String, dynamic> args) => tryExecuteBattery('battery');
 }

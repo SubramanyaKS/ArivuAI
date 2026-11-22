@@ -1,7 +1,6 @@
 import 'package:arivu_ai/tools/tool_registry.dart';
 import 'package:arivu_ai/features/chat/service/chat_utils.dart';
 import 'dart:developer';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -463,11 +462,30 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     if (!mounted) return;
 
-    // Dispatch through Central Tool Registry
-    final toolResult = await ToolRegistry.dispatch(prompt);
+    await _generateAssistantReply(
+      prompt: prompt,
+      userMessage: userMessage,
+      conversationId: savedConversationId,
+      docToUse: docToUse,
+    );
+  }
+
+  Future<void> _generateAssistantReply({
+    required String prompt,
+    required ChatMessage userMessage,
+    required int conversationId,
+    AttachedDocument? docToUse,
+  }) async {
+    if (!mounted) return;
+
+    // Dispatch through Central Tool Registry (Two-Tier Hybrid Pipeline)
+    final toolResult = await ToolRegistry.dispatch(
+      prompt,
+      aiService: widget.aiService,
+    );
     if (toolResult.handled && toolResult.reply != null) {
       final replyMsg = ChatMessage(
-        conversationId: savedConversationId,
+        conversationId: conversationId,
         role: 'assistant',
         content: toolResult.reply!,
         createdAt: DateTime.now(),
@@ -488,7 +506,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final assistantCreatedAt = DateTime.now();
     final assistantMessageIndex = _messages.length;
     final responseBuffer = StringBuffer();
-    final contextMessages = ChatUtils.buildContextMessages(messages: _messages, prompt: prompt, currentMessage: userMessage);
+    final contextMessages = ChatUtils.buildContextMessages(
+      messages: _messages,
+      prompt: prompt,
+      currentMessage: userMessage,
+    );
 
     // Build context with RAG document injection if a document is attached
     String? ragSystemPrompt;
@@ -519,7 +541,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
         setState(() {
           final message = ChatMessage(
-            conversationId: savedConversationId,
+            conversationId: conversationId,
             role: 'assistant',
             content: responseBuffer.toString(),
             createdAt: assistantCreatedAt,
@@ -554,7 +576,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (!mounted) return;
 
     final assistantMessage = ChatMessage(
-      conversationId: savedConversationId,
+      conversationId: conversationId,
       role: 'assistant',
       content: responseBuffer.toString(),
       createdAt: assistantCreatedAt,
@@ -589,6 +611,152 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       debugPrintStack(stackTrace: stackTrace);
       _showHistoryError('Chat history could not be refreshed.');
     }
+  }
+
+  Future<void> _regenerateLastResponse() async {
+    if (_isThinking || _messages.isEmpty || _currentConversationId == null) {
+      return;
+    }
+
+    final lastMessage = _messages.last;
+    if (lastMessage.role != 'assistant') return;
+
+    // Find the user message that prompted this assistant response
+    ChatMessage? userMessage;
+    for (int i = _messages.length - 2; i >= 0; i--) {
+      if (_messages[i].role == 'user') {
+        userMessage = _messages[i];
+        break;
+      }
+    }
+
+    if (userMessage == null) return;
+
+    // Delete the last assistant message from database and local list
+    try {
+      if (lastMessage.id != null) {
+        await _chatDatabase.deleteMessage(lastMessage.id!);
+      }
+    } catch (e) {
+      debugPrint('Error deleting message to regenerate: $e');
+    }
+
+    setState(() {
+      _messages.removeLast();
+      _isThinking = true;
+      _hasResponseStarted = false;
+    });
+
+    _scrollToBottom(force: true);
+
+    await _generateAssistantReply(
+      prompt: userMessage.content,
+      userMessage: userMessage,
+      conversationId: _currentConversationId!,
+      docToUse: _attachedDocument,
+    );
+  }
+
+  Future<void> _showEditPromptDialog(ChatMessage message, int index) async {
+    if (_isThinking || _currentConversationId == null) return;
+
+    final editController = TextEditingController(text: message.content);
+
+    final newPrompt = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.edit_note_rounded, color: Color(0xFF4F46E5)),
+            SizedBox(width: 8),
+            Text('Edit Prompt', style: TextStyle(fontSize: 18)),
+          ],
+        ),
+        content: TextField(
+          controller: editController,
+          autofocus: true,
+          maxLines: 5,
+          minLines: 1,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: InputDecoration(
+            hintText: 'Edit your prompt...',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF4F46E5),
+            ),
+            onPressed: () {
+              final text = editController.text.trim();
+              if (text.isNotEmpty && text != message.content.trim()) {
+                Navigator.pop(ctx, text);
+              } else {
+                Navigator.pop(ctx);
+              }
+            },
+            child: const Text('Save & Resubmit'),
+          ),
+        ],
+      ),
+    );
+
+    if (newPrompt == null || !mounted) return;
+
+    setState(() {
+      _isThinking = true;
+      _hasResponseStarted = false;
+    });
+
+    // Delete message and any subsequent messages in this conversation
+    try {
+      await _chatDatabase.deleteMessagesFrom(
+        conversationId: _currentConversationId!,
+        messageId: message.id,
+        createdAtMillis: message.createdAt.millisecondsSinceEpoch,
+      );
+    } catch (e) {
+      debugPrint('Error deleting downstream messages on edit: $e');
+    }
+
+    final createdAt = DateTime.now();
+    final updatedUserMessage = ChatMessage(
+      conversationId: _currentConversationId!,
+      role: 'user',
+      content: newPrompt,
+      createdAt: createdAt,
+    );
+
+    try {
+      await _chatDatabase.saveMessage(updatedUserMessage);
+    } catch (e) {
+      debugPrint('Error saving edited user message: $e');
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      // Truncate list from this index onwards, then add the new user message
+      if (index < _messages.length) {
+        _messages.removeRange(index, _messages.length);
+      }
+      _messages.add(updatedUserMessage);
+    });
+
+    _scrollToBottom(force: true);
+
+    await _generateAssistantReply(
+      prompt: newPrompt,
+      userMessage: updatedUserMessage,
+      conversationId: _currentConversationId!,
+      docToUse: _attachedDocument,
+    );
   }
 
   String _formatInferenceErrorMessage(Object error) {
@@ -1262,7 +1430,76 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                           minHeight: 32,
                                         ),
                                       ),
+                                      if (index == visibleMessages.length - 1)
+                                        IconButton(
+                                          tooltip: 'Regenerate response',
+                                          onPressed: _isThinking
+                                              ? null
+                                              : _regenerateLastResponse,
+                                          icon: Icon(
+                                            Icons.refresh_rounded,
+                                            size: 18,
+                                            color: isDark
+                                                ? const Color(0xFF94A3B8)
+                                                : const Color(0xFF64748B),
+                                          ),
+                                          visualDensity: VisualDensity.compact,
+                                          padding: const EdgeInsets.all(4),
+                                          constraints: const BoxConstraints(
+                                            minWidth: 32,
+                                            minHeight: 32,
+                                          ),
+                                        ),
                                     ],
+                                  ),
+                                if (isMe)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          tooltip: 'Edit prompt',
+                                          onPressed: _isThinking
+                                              ? null
+                                              : () => _showEditPromptDialog(
+                                                    message,
+                                                    index,
+                                                  ),
+                                          icon: Icon(
+                                            Icons.edit_outlined,
+                                            size: 16,
+                                            color: isDark
+                                                ? const Color(0xFF94A3B8)
+                                                : const Color(0xFF64748B),
+                                          ),
+                                          visualDensity: VisualDensity.compact,
+                                          padding: const EdgeInsets.all(4),
+                                          constraints: const BoxConstraints(
+                                            minWidth: 28,
+                                            minHeight: 28,
+                                          ),
+                                        ),
+                                        IconButton(
+                                          tooltip: 'Copy message',
+                                          onPressed: () =>
+                                              _copyMessage(message.content),
+                                          icon: Icon(
+                                            Icons.copy_rounded,
+                                            size: 16,
+                                            color: isDark
+                                                ? const Color(0xFF94A3B8)
+                                                : const Color(0xFF64748B),
+                                          ),
+                                          visualDensity: VisualDensity.compact,
+                                          padding: const EdgeInsets.all(4),
+                                          constraints: const BoxConstraints(
+                                            minWidth: 28,
+                                            minHeight: 28,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                               ],
                             ),

@@ -9,4 +9,8 @@ abstract class PocketTool {
   /// Attempts to parse and execute the user's prompt deterministically.
   /// Returns a user-facing reply if handled, or `null` if the prompt does not match this tool.
   Future<String?> tryExecute(String prompt);
+
+  /// Executes the tool with structured arguments returned from an LLM tool call.
+  /// Defaults to returning null if not implemented by the tool.
+  Future<String?> executeWithArgs(Map<String, dynamic> args) async => null;
 }
