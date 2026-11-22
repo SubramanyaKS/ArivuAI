@@ -551,15 +551,59 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                     : (isDark ? Colors.white70 : const Color(0xFF334155)),
                                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                               ),
-                              onSelected: (_) async {
-                                await _aiService.updateInferenceConfig(
-                                  inferenceConfig.copyWith(contextSize: ctx),
-                                );
-                                if (mounted) setState(() {});
-                              },
-                            );
-                          }).toList(),
-                        ),
+                                onSelected: (_) async {
+                                  await _aiService.updateInferenceConfig(
+                                    inferenceConfig.copyWith(contextSize: ctx),
+                                  );
+                                  if (ctx <= 1024) {
+                                    _aiService.clearMemoryPressureFlag();
+                                  }
+                                  if (mounted) setState(() {});
+                                },
+                              );
+                            }).toList(),
+                          ),
+                          if (_aiService.isHighRamConfiguration ||
+                              _aiService.hasMemoryPressure) ...[
+                            const SizedBox(height: 10),
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF59E0B)
+                                    .withValues(alpha: isDark ? 0.16 : 0.1),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: const Color(0xFFF59E0B)
+                                      .withValues(alpha: 0.35),
+                                ),
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Icon(
+                                    Icons.memory_rounded,
+                                    size: 16,
+                                    color: Color(0xFFF59E0B),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      _aiService.hasMemoryPressure
+                                          ? 'Your device recently reported low memory. Consider switching to 1K (Eco) context or a lighter model for stability.'
+                                          : '4K context or 1.5B+ models use more RAM (4 GB+ device recommended). Switch to 1K (Eco) if generation slows down.',
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        height: 1.4,
+                                        color: isDark
+                                            ? const Color(0xFFFDE68A)
+                                            : const Color(0xFF92400E),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                       ],
                     ),
                   ),

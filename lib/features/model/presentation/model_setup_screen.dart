@@ -84,11 +84,16 @@ class _ModelSetupScreenState extends State<ModelSetupScreen> {
   }
 
   String _modelErrorMessage(Object error) {
+    if (error is DioException && error.type == DioExceptionType.cancel) {
+      return 'Download paused. Your downloaded progress is saved on this device — '
+          'tap "Resume / Try again" whenever you are ready to continue.';
+    }
+
     if (error is DioException &&
         (error.error is SocketException ||
             error.toString().contains('Failed host lookup'))) {
       return 'Could not reach Hugging Face. Check your internet connection '
-          'or device DNS settings, then try again.';
+          'or device DNS settings, then try again. Any downloaded progress has been saved.';
     }
 
     if (error is DioException &&
@@ -187,6 +192,16 @@ class _ModelSetupScreenState extends State<ModelSetupScreen> {
                             height: 1.4,
                           ),
                         ),
+                        if (_downloadProgress != null &&
+                            _downloadProgress! < 1.0) ...[
+                          const SizedBox(height: 14),
+                          OutlinedButton.icon(
+                            onPressed: () =>
+                                _aiService.cancelActiveDownload(deletePartial: false),
+                            icon: const Icon(Icons.pause_rounded, size: 18),
+                            label: const Text('Pause Download'),
+                          ),
+                        ],
                       ],
                       if (_error != null) ...[
                         const SizedBox(height: 20),
@@ -202,7 +217,7 @@ class _ModelSetupScreenState extends State<ModelSetupScreen> {
                         FilledButton.icon(
                           onPressed: _initializeModel,
                           icon: const Icon(Icons.refresh),
-                          label: const Text('Try again'),
+                          label: const Text('Resume / Try again'),
                         ),
                       ],
                     ],

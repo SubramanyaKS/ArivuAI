@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
@@ -48,14 +49,28 @@ class DocumentService {
         throw StateError('Unable to read bytes from selected file: $name');
       }
 
-      final extractedText = extractText(name: name, bytes: bytes);
+      // Offload heavy PDF parsing and semantic chunking to a background Isolate
+      // to keep the Flutter UI thread responsive and prevent ANRs on large files.
+      final parsed = await Isolate.run(() {
+        final text = DocumentService.instance.extractText(
+          name: name,
+          bytes: bytes!,
+        );
+        if (text.trim().isEmpty) {
+          return (text: '', chunks: const <DocumentChunk>[]);
+        }
+        final chunks = DocumentService.instance.chunkText(text);
+        return (text: text, chunks: chunks);
+      });
+
+      final extractedText = parsed.text;
       if (extractedText.trim().isEmpty) {
         throw StateError(
           'No readable text could be extracted from $name. (Scanned or image-only PDFs are not supported).',
         );
       }
 
-      final chunks = chunkText(extractedText);
+      final chunks = parsed.chunks;
 
       return AttachedDocument(
         id: DateTime.now().millisecondsSinceEpoch.toString(),

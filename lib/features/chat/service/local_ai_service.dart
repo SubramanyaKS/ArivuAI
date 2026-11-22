@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -37,6 +38,92 @@ class LocalAiService extends ChangeNotifier {
 
   bool _isLoaded = false;
   bool get isLoaded => _isLoaded;
+
+  CancelToken? _activeDownloadCancelToken;
+  bool get isDownloading =>
+      _activeDownloadCancelToken != null &&
+      !_activeDownloadCancelToken!.isCancelled;
+
+  bool _hasMemoryPressure = false;
+
+  /// True if Android/iOS recently signaled low memory pressure.
+  bool get hasMemoryPressure => _hasMemoryPressure;
+
+  /// True when the active model (>=900MB) or context window (>=4096) requires 4GB+ RAM.
+  bool get isHighRamConfiguration =>
+      _activeModel.sizeBytes >= 900 * 1024 * 1024 ||
+      _inferenceConfig.contextSize >= 4096;
+
+  /// Called by the app lifecycle observer when the OS reports memory pressure.
+  void handleMemoryPressure() {
+    debugPrint('[MEMORY] OS reported memory pressure (activeModel=${_activeModel.id}, ctx=${_inferenceConfig.contextSize})');
+    _hasMemoryPressure = true;
+    notifyListeners();
+  }
+
+  /// Clears the memory pressure banner flag after user acknowledgment or config downgrade.
+  void clearMemoryPressureFlag() {
+    if (_hasMemoryPressure) {
+      _hasMemoryPressure = false;
+      notifyListeners();
+    }
+  }
+
+  /// Pauses/cancels an in-progress model download.
+  /// By default preserves the `.part` file so downloading can resume later.
+  Future<void> cancelActiveDownload({
+    bool deletePartial = false,
+    ModelSpec? spec,
+  }) async {
+    if (_activeDownloadCancelToken != null &&
+        !_activeDownloadCancelToken!.isCancelled) {
+      _activeDownloadCancelToken!.cancel('Download paused by user');
+    }
+    if (deletePartial) {
+      final modelFile = await getModelFile(spec ?? _activeModel);
+      final partialFile = File('${modelFile.path}.part');
+      if (await partialFile.exists()) {
+        await partialFile.delete();
+      }
+    }
+    notifyListeners();
+  }
+
+  /// Returns how many bytes of a partial `.part` download already exist on disk.
+  Future<int> getPartialDownloadBytes([ModelSpec? spec]) async {
+    final modelFile = await getModelFile(spec ?? _activeModel);
+    final partialFile = File('${modelFile.path}.part');
+    if (await partialFile.exists()) {
+      return await partialFile.length();
+    }
+    return 0;
+  }
+
+  Completer<void>? _engineLock;
+
+  /// Whether the native llama.cpp engine is currently executing an operation
+  /// (generation or model load).
+  bool get isEngineBusy => _engineLock != null;
+
+  /// Acquires exclusive access to the native llama.cpp engine to prevent
+  /// concurrent native calls across Chat, Voice, Document AI, and Settings.
+  Future<Completer<void>> _acquireEngineLock() async {
+    while (_engineLock != null) {
+      await _engineLock!.future;
+    }
+    final lock = Completer<void>();
+    _engineLock = lock;
+    return lock;
+  }
+
+  void _releaseEngineLock(Completer<void> lock) {
+    if (identical(_engineLock, lock)) {
+      _engineLock = null;
+    }
+    if (!lock.isCompleted) {
+      lock.complete();
+    }
+  }
 
   LocalAiService() {
     _currentInstance = this;
@@ -169,13 +256,18 @@ class LocalAiService extends ChangeNotifier {
       );
       final modelFile = await getModelFile(_activeModel);
       if (await modelFile.exists()) {
-        await _engine.setModel(
-          LlamaModel(ModelSource.path(modelFile.path)),
-          params: ModelParams(
-            contextSize: newConfig.contextSize,
-            numberOfThreads: newConfig.numberOfThreads,
-          ),
-        );
+        final lock = await _acquireEngineLock();
+        try {
+          await _engine.setModel(
+            LlamaModel(ModelSource.path(modelFile.path)),
+            params: ModelParams(
+              contextSize: newConfig.contextSize,
+              numberOfThreads: newConfig.numberOfThreads,
+            ),
+          );
+        } finally {
+          _releaseEngineLock(lock);
+        }
       }
     }
   }
@@ -235,18 +327,22 @@ class LocalAiService extends ChangeNotifier {
     }
 
     final partialFile = File('${modelFile.path}.part');
+    final existingBytes =
+        await partialFile.exists() ? await partialFile.length() : 0;
 
-    if (await partialFile.exists()) {
-      await partialFile.delete();
-    }
+    final cancelToken = CancelToken();
+    _activeDownloadCancelToken = cancelToken;
+    notifyListeners();
 
     final downloadTimer = Stopwatch()..start();
 
     try {
-      await _dio.download(
-        modelSpec.downloadUrl,
-        partialFile.path,
-        onReceiveProgress: onDownloadProgress,
+      await _downloadWithResume(
+        url: modelSpec.downloadUrl,
+        partialFile: partialFile,
+        existingBytes: existingBytes,
+        cancelToken: cancelToken,
+        onDownloadProgress: onDownloadProgress,
       );
 
       // Capture size BEFORE renaming the partial file.
@@ -262,16 +358,19 @@ class LocalAiService extends ChangeNotifier {
       );
 
       if (downloadedBytes == 0) {
+        await partialFile.delete();
         throw StateError('The downloaded model file is empty.');
       }
 
       if (!await _hasGgufHeader(partialFile)) {
+        await partialFile.delete();
         throw StateError('The downloaded file is not a valid GGUF model.');
       }
 
       // Cryptographic SHA-256 supply-chain verification (if checksum provided)
       if (modelSpec.sha256 != null) {
         if (!await _verifySha256(partialFile, modelSpec.sha256!)) {
+          await partialFile.delete();
           throw StateError(
             'Security alert: Model file failed SHA-256 integrity verification.',
           );
@@ -279,12 +378,17 @@ class LocalAiService extends ChangeNotifier {
       }
 
       await partialFile.rename(modelFile.path);
+    } on DioException {
+      // Preserve partialFile on network drop or user pause so the next attempt
+      // resumes via HTTP Range instead of re-downloading hundreds of MB!
+      rethrow;
     } catch (_) {
-      if (await partialFile.exists()) {
-        await partialFile.delete();
-      }
       rethrow;
     } finally {
+      if (identical(_activeDownloadCancelToken, cancelToken)) {
+        _activeDownloadCancelToken = null;
+        notifyListeners();
+      }
       downloadTimer.stop();
 
       debugPrint(
@@ -294,6 +398,88 @@ class LocalAiService extends ChangeNotifier {
     }
 
     return modelFile.path;
+  }
+
+  /// Downloads [url] into [partialFile], seamlessly resuming via HTTP Range
+  /// when [existingBytes] > 0.
+  Future<void> _downloadWithResume({
+    required String url,
+    required File partialFile,
+    required int existingBytes,
+    required CancelToken cancelToken,
+    void Function(int received, int total)? onDownloadProgress,
+  }) async {
+    if (existingBytes <= 0) {
+      await _dio.download(
+        url,
+        partialFile.path,
+        cancelToken: cancelToken,
+        deleteOnError: false,
+        onReceiveProgress: onDownloadProgress,
+      );
+      return;
+    }
+
+    debugPrint(
+      '[DOWNLOAD] Resuming partial download from '
+      '${(existingBytes / (1024 * 1024)).toStringAsFixed(1)} MB...',
+    );
+
+    final response = await _dio.get<ResponseBody>(
+      url,
+      cancelToken: cancelToken,
+      options: Options(
+        responseType: ResponseType.stream,
+        headers: {'Range': 'bytes=$existingBytes-'},
+        validateStatus: (status) =>
+            status != null && (status == 200 || status == 206 || status == 416),
+      ),
+    );
+
+    if (response.statusCode == 416) {
+      // Range not satisfiable (stale or already complete partial file) — restart cleanly
+      if (await partialFile.exists()) {
+        await partialFile.delete();
+      }
+      await _dio.download(
+        url,
+        partialFile.path,
+        cancelToken: cancelToken,
+        deleteOnError: false,
+        onReceiveProgress: onDownloadProgress,
+      );
+      return;
+    }
+
+    final isPartial = response.statusCode == 206;
+    final baseOffset = isPartial ? existingBytes : 0;
+    final contentLengthHeader = response.headers.value(Headers.contentLengthHeader);
+    final remainingBytes = int.tryParse(contentLengthHeader ?? '') ?? -1;
+    final totalBytes = remainingBytes > 0 ? baseOffset + remainingBytes : -1;
+
+    final sink = partialFile.openWrite(
+      mode: isPartial ? FileMode.append : FileMode.write,
+    );
+
+    int receivedInSession = 0;
+    try {
+      final stream = response.data!.stream;
+      await for (final chunk in stream) {
+        if (cancelToken.isCancelled) {
+          throw DioException(
+            requestOptions: response.requestOptions,
+            type: DioExceptionType.cancel,
+            message: 'Download paused by user',
+          );
+        }
+        sink.add(chunk);
+        receivedInSession += chunk.length;
+        onDownloadProgress?.call(baseOffset + receivedInSession, totalBytes);
+      }
+      await sink.flush();
+    } finally {
+      await sink.close();
+    }
   }
 
   Future<bool> _verifySha256(File file, String expectedHash) async {
@@ -358,6 +544,7 @@ class LocalAiService extends ChangeNotifier {
       );
 
       nativeLoadTimer = Stopwatch()..start();
+      final lock = await _acquireEngineLock();
 
       try {
         await _engine.setModel(
@@ -368,6 +555,7 @@ class LocalAiService extends ChangeNotifier {
           ),
         );
       } finally {
+        _releaseEngineLock(lock);
         nativeLoadTimer.stop();
 
         _performanceMetrics = PerformanceMetrics(
@@ -466,25 +654,7 @@ Strict Operating Rules:
     // otherwise they get confused and echo the unknown slash command back to the user.
     final isThinkingModel = _activeModel.id.toLowerCase().contains('qwen3');
 
-    final tokenStream = _engine.create(
-      [
-        LlamaChatMessage.fromText(
-          role: LlamaChatRole.system,
-          text: effectiveSystemPrompt.trim(),
-        ),
-        for (var i = 0; i < conversation.length; i++)
-          LlamaChatMessage.fromText(
-            role: LlamaChatRole.values.byName(conversation[i].role),
-            text: i == conversation.length - 1 &&
-                    conversation[i].role == 'user' &&
-                    isThinkingModel
-                ? '${conversation[i].content}\n/no_think'
-                : conversation[i].content,
-          ),
-      ],
-      params: GenerationParams(maxTokens: effectiveMaxTokens, temp: effectiveTemp),
-      enableThinking: false,
-    );
+    final lock = await _acquireEngineLock();
 
     void recordVisibleText(String text) {
       if (text.isEmpty) return;
@@ -497,6 +667,26 @@ Strict Operating Rules:
     }
 
     try {
+      final tokenStream = _engine.create(
+        [
+          LlamaChatMessage.fromText(
+            role: LlamaChatRole.system,
+            text: effectiveSystemPrompt.trim(),
+          ),
+          for (var i = 0; i < conversation.length; i++)
+            LlamaChatMessage.fromText(
+              role: LlamaChatRole.values.byName(conversation[i].role),
+              text: i == conversation.length - 1 &&
+                      conversation[i].role == 'user' &&
+                      isThinkingModel
+                  ? '${conversation[i].content}\n/no_think'
+                  : conversation[i].content,
+            ),
+        ],
+        params: GenerationParams(maxTokens: effectiveMaxTokens, temp: effectiveTemp),
+        enableThinking: false,
+      );
+
       await for (final chunk in tokenStream) {
         final cleaned = filter.process(chunk.text);
 
@@ -514,6 +704,7 @@ Strict Operating Rules:
         yield remaining;
       }
     } finally {
+      _releaseEngineLock(lock);
       generationTimer.stop();
 
       final totalMs = generationTimer.elapsedMilliseconds;

@@ -506,11 +506,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final assistantCreatedAt = DateTime.now();
     final assistantMessageIndex = _messages.length;
     final responseBuffer = StringBuffer();
-    final contextMessages = ChatUtils.buildContextMessages(
-      messages: _messages,
-      prompt: prompt,
-      currentMessage: userMessage,
-    );
 
     // Build context with RAG document injection if a document is attached
     String? ragSystemPrompt;
@@ -525,6 +520,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         relevantChunks: relevantChunks,
       );
     }
+
+    // Dynamically align conversation history budget with active contextSize
+    final config = widget.aiService.inferenceConfig;
+    final effectiveSystemChars =
+        (ragSystemPrompt ?? LocalAiService.defaultChatSystemPrompt).length;
+    final dynamicMaxChars = ChatUtils.computeMaxInputCharacters(
+      contextSize: config.contextSize,
+      maxGenerationTokens: config.maxTokens,
+      systemPromptChars: effectiveSystemChars,
+    );
+    final dynamicMaxMessages =
+        config.contextSize >= 4096 ? 12 : (config.contextSize >= 2048 ? 8 : 4);
+
+    final contextMessages = ChatUtils.buildContextMessages(
+      messages: _messages,
+      prompt: prompt,
+      currentMessage: userMessage,
+      maxInputCharacters: dynamicMaxChars,
+      maxHistoryMessages: dynamicMaxMessages,
+    );
 
     _isCancelled = false;
 
