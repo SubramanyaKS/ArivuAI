@@ -1,0 +1,10 @@
+# Copy this file to `android/key.properties` and fill in your release keystore details.
+# IMPORTANT: Never commit `android/key.properties` or your `.jks`/`.keystore` file to Git!
+#
+# To generate a new upload keystore on Windows/macOS/Linux:
+# keytool -genkey -v -keystore android/app/upload-keystore.jks -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+
+storePassword=YOUR_STORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=upload
+storeFile=upload-keystore.jks

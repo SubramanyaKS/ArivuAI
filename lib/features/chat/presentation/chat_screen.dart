@@ -228,6 +228,73 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     });
   }
 
+  Future<void> _togglePinConversation(int id, bool currentlyPinned) async {
+    try {
+      await _chatDatabase.togglePinConversation(id, !currentlyPinned);
+      await _refreshConversations();
+    } catch (error) {
+      debugPrint('Pin conversation error: $error');
+      _showHistoryError('Could not update pin status.');
+    }
+  }
+
+  Future<void> _renameConversation(int id, String currentTitle) async {
+    final controller = TextEditingController(text: currentTitle);
+    final newTitle = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Row(
+          children: [
+            Icon(Icons.drive_file_rename_outline_rounded, color: Color(0xFF4F46E5)),
+            SizedBox(width: 8),
+            Text('Rename Chat', style: TextStyle(fontSize: 18)),
+          ],
+        ),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 60,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: InputDecoration(
+            hintText: 'Enter conversation title...',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF4F46E5),
+            ),
+            onPressed: () {
+              final text = controller.text.trim();
+              if (text.isNotEmpty) {
+                Navigator.of(ctx).pop(text);
+              } else {
+                Navigator.of(ctx).pop();
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (newTitle == null || newTitle == currentTitle || !mounted) return;
+
+    try {
+      await _chatDatabase.renameConversation(id, newTitle);
+      await _refreshConversations();
+    } catch (error) {
+      debugPrint('Rename conversation error: $error');
+      _showHistoryError('Could not rename conversation.');
+    }
+  }
+
   Future<void> _deleteConversation(int id) async {
     final conversation = _conversations.firstWhere((item) => item['id'] == id);
     final shouldDelete = await showDialog<bool>(
@@ -1119,13 +1186,28 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                           itemBuilder: (context, index) {
                             final conversation = _conversations[index];
                             final id = conversation['id'] as int;
+                            final title = conversation['title'] as String;
+                            final isPinned = (conversation['is_pinned'] as int? ?? 0) == 1;
                             final snippet = conversation['matching_snippet'] as String?;
                             return ListTile(
-                              leading: const Icon(Icons.chat_bubble_outline),
+                              leading: Icon(
+                                isPinned
+                                    ? Icons.push_pin_rounded
+                                    : Icons.chat_bubble_outline,
+                                size: isPinned ? 19 : 20,
+                                color: isPinned
+                                    ? const Color(0xFF4F46E5)
+                                    : null,
+                              ),
                               title: Text(
-                                conversation['title'] as String,
+                                title,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontWeight: isPinned
+                                      ? FontWeight.w600
+                                      : FontWeight.normal,
+                                ),
                               ),
                               subtitle: (snippet != null && snippet.trim().isNotEmpty)
                                   ? Text(
@@ -1147,12 +1229,65 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                               onTap: _isThinking
                                   ? null
                                   : () => _selectConversation(id),
-                              trailing: IconButton(
-                                tooltip: 'Delete conversation',
-                                onPressed: _isThinking
-                                    ? null
-                                    : () => _deleteConversation(id),
-                                icon: const Icon(Icons.delete_outline),
+                              trailing: PopupMenuButton<String>(
+                                enabled: !_isThinking,
+                                tooltip: 'Chat options',
+                                icon: const Icon(Icons.more_vert_rounded, size: 19),
+                                onSelected: (action) {
+                                  if (action == 'pin') {
+                                    _togglePinConversation(id, isPinned);
+                                  } else if (action == 'rename') {
+                                    _renameConversation(id, title);
+                                  } else if (action == 'delete') {
+                                    _deleteConversation(id);
+                                  }
+                                },
+                                itemBuilder: (context) => [
+                                  PopupMenuItem(
+                                    value: 'pin',
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          isPinned
+                                              ? Icons.push_pin_outlined
+                                              : Icons.push_pin_rounded,
+                                          size: 18,
+                                          color: const Color(0xFF4F46E5),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Text(isPinned ? 'Unpin chat' : 'Pin to top'),
+                                      ],
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'rename',
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.drive_file_rename_outline_rounded,
+                                          size: 18,
+                                          color: Color(0xFF10B981),
+                                        ),
+                                        SizedBox(width: 10),
+                                        Text('Rename'),
+                                      ],
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'delete',
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.delete_outline_rounded,
+                                          size: 18,
+                                          color: Color(0xFFEF4444),
+                                        ),
+                                        SizedBox(width: 10),
+                                        Text('Delete'),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
                             );
                           },

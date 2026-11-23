@@ -18,7 +18,7 @@ class ChatDatabase {
 
     _database = await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -28,7 +28,8 @@ class ChatDatabase {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL
+            updated_at INTEGER NOT NULL,
+            is_pinned INTEGER NOT NULL DEFAULT 0
           )
         ''');
 
@@ -119,6 +120,11 @@ class ChatDatabase {
             'CREATE INDEX IF NOT EXISTS idx_documents_created ON documents(created_at DESC)',
           );
         }
+        if (oldVersion < 5) {
+          await db.execute(
+            'ALTER TABLE conversations ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0',
+          );
+        }
       },
     );
 
@@ -175,11 +181,38 @@ class ChatDatabase {
     return maps.map(ChatMessage.fromMap).toList();
   }
 
-  // Load the conversation list, newest first.
+  // Load the conversation list, pinned first then newest first.
   Future<List<Map<String, dynamic>>> getConversations() async {
     final db = await database;
 
-    return db.query('conversations', orderBy: 'updated_at DESC, id DESC');
+    return db.query(
+      'conversations',
+      orderBy: 'is_pinned DESC, updated_at DESC, id DESC',
+    );
+  }
+
+  /// Toggles whether a conversation is pinned to the top of the drawer.
+  Future<void> togglePinConversation(int id, bool isPinned) async {
+    final db = await database;
+    await db.update(
+      'conversations',
+      {'is_pinned': isPinned ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Renames a conversation's title.
+  Future<void> renameConversation(int id, String newTitle) async {
+    final clean = newTitle.trim();
+    if (clean.isEmpty) return;
+    final db = await database;
+    await db.update(
+      'conversations',
+      {'title': clean},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
   /// Searches conversations matching the query string in title or message contents.
@@ -192,14 +225,14 @@ class ChatDatabase {
     final pattern = '%$cleanQuery%';
 
     return db.rawQuery('''
-      SELECT DISTINCT c.id, c.title, c.created_at, c.updated_at,
+      SELECT DISTINCT c.id, c.title, c.created_at, c.updated_at, c.is_pinned,
              (SELECT m.content FROM messages m 
               WHERE m.conversation_id = c.id AND m.content LIKE ? 
               ORDER BY m.created_at DESC LIMIT 1) AS matching_snippet
       FROM conversations c
       LEFT JOIN messages m ON m.conversation_id = c.id
       WHERE c.title LIKE ? OR m.content LIKE ?
-      ORDER BY c.updated_at DESC, c.id DESC
+      ORDER BY c.is_pinned DESC, c.updated_at DESC, c.id DESC
     ''', [pattern, pattern, pattern]);
   }
 

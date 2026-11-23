@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:arivu_ai/features/chat/service/chat_database.dart';
 import 'package:arivu_ai/features/chat/service/local_ai_service.dart';
 import 'package:arivu_ai/features/model/models/inference_config.dart';
+import 'package:arivu_ai/features/settings/presentation/benchmark_screen.dart';
 import 'package:arivu_ai/features/settings/presentation/manage_models_screen.dart';
 import 'package:arivu_ai/provider/theme_provider.dart';
 
@@ -284,6 +285,52 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       if (mounted) {
                         setState(() {});
                       }
+                    },
+                  ),
+                  Divider(
+                    height: 1,
+                    color: isDark
+                        ? Colors.white.withValues(alpha: 0.08)
+                        : const Color(0xFFE2E8F0),
+                  ),
+                  // Navigation to In-App Benchmark Screen
+                  ListTile(
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    leading: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.speed_rounded,
+                        color: Color(0xFFF59E0B),
+                      ),
+                    ),
+                    title: const Text(
+                      'Benchmark My Phone',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
+                    ),
+                    subtitle: const Text(
+                      'Measure real-world tokens/sec and latency on this device',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    trailing: const Icon(
+                      Icons.chevron_right_rounded,
+                      color: Color(0xFF94A3B8),
+                    ),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              BenchmarkScreen(aiService: _aiService),
+                        ),
+                      );
                     },
                   ),
                 ],
