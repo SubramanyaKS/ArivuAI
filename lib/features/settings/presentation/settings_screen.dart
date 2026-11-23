@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:arivu_ai/features/chat/service/chat_database.dart';
 import 'package:arivu_ai/features/chat/service/local_ai_service.dart';
 import 'package:arivu_ai/features/model/models/inference_config.dart';
+import 'package:arivu_ai/features/settings/presentation/benchmark_screen.dart';
 import 'package:arivu_ai/features/settings/presentation/manage_models_screen.dart';
 import 'package:arivu_ai/provider/theme_provider.dart';
 
@@ -286,6 +287,52 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       }
                     },
                   ),
+                  Divider(
+                    height: 1,
+                    color: isDark
+                        ? Colors.white.withValues(alpha: 0.08)
+                        : const Color(0xFFE2E8F0),
+                  ),
+                  // Navigation to In-App Benchmark Screen
+                  ListTile(
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    leading: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.speed_rounded,
+                        color: Color(0xFFF59E0B),
+                      ),
+                    ),
+                    title: const Text(
+                      'Benchmark My Phone',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
+                    ),
+                    subtitle: const Text(
+                      'Measure real-world tokens/sec and latency on this device',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    trailing: const Icon(
+                      Icons.chevron_right_rounded,
+                      color: Color(0xFF94A3B8),
+                    ),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              BenchmarkScreen(aiService: _aiService),
+                        ),
+                      );
+                    },
+                  ),
                 ],
               ),
             ),
@@ -551,15 +598,59 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                     : (isDark ? Colors.white70 : const Color(0xFF334155)),
                                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                               ),
-                              onSelected: (_) async {
-                                await _aiService.updateInferenceConfig(
-                                  inferenceConfig.copyWith(contextSize: ctx),
-                                );
-                                if (mounted) setState(() {});
-                              },
-                            );
-                          }).toList(),
-                        ),
+                                onSelected: (_) async {
+                                  await _aiService.updateInferenceConfig(
+                                    inferenceConfig.copyWith(contextSize: ctx),
+                                  );
+                                  if (ctx <= 1024) {
+                                    _aiService.clearMemoryPressureFlag();
+                                  }
+                                  if (mounted) setState(() {});
+                                },
+                              );
+                            }).toList(),
+                          ),
+                          if (_aiService.isHighRamConfiguration ||
+                              _aiService.hasMemoryPressure) ...[
+                            const SizedBox(height: 10),
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF59E0B)
+                                    .withValues(alpha: isDark ? 0.16 : 0.1),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: const Color(0xFFF59E0B)
+                                      .withValues(alpha: 0.35),
+                                ),
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Icon(
+                                    Icons.memory_rounded,
+                                    size: 16,
+                                    color: Color(0xFFF59E0B),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      _aiService.hasMemoryPressure
+                                          ? 'Your device recently reported low memory. Consider switching to 1K (Eco) context or a lighter model for stability.'
+                                          : '4K context or 1.5B+ models use more RAM (4 GB+ device recommended). Switch to 1K (Eco) if generation slows down.',
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        height: 1.4,
+                                        color: isDark
+                                            ? const Color(0xFFFDE68A)
+                                            : const Color(0xFF92400E),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                       ],
                     ),
                   ),

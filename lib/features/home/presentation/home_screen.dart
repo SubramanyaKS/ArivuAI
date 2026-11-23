@@ -1,3 +1,4 @@
+import 'package:arivu_ai/features/document/presentation/document_intelligence_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:arivu_ai/features/assistant/presentation/voice_assistant_screen.dart';
 import 'package:arivu_ai/features/chat/presentation/chat_screen.dart';
@@ -18,6 +19,7 @@ class _HomeScreenState extends State<HomeScreen> {
   late final List<Widget> _pages = <Widget>[
     ChatScreen(aiService: widget.aiService),
     VoiceAssistantScreen(aiService: widget.aiService),
+    DocumentIntelligenceScreen(aiService: widget.aiService),
   ];
 
   void _onItemTapped(int index) {
@@ -65,6 +67,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 icon: Icon(Icons.graphic_eq_rounded),
                 activeIcon: Icon(Icons.graphic_eq_rounded),
                 label: 'Voice Assistant',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.auto_stories_rounded),
+                activeIcon: Icon(Icons.auto_stories_rounded),
+                label: 'Doc Intelligence',
               ),
             ],
           ),

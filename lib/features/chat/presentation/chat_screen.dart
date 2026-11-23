@@ -1,7 +1,6 @@
 import 'package:arivu_ai/tools/tool_registry.dart';
 import 'package:arivu_ai/features/chat/service/chat_utils.dart';
 import 'dart:developer';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -227,6 +226,73 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       _currentConversationId = null;
       _messages.clear();
     });
+  }
+
+  Future<void> _togglePinConversation(int id, bool currentlyPinned) async {
+    try {
+      await _chatDatabase.togglePinConversation(id, !currentlyPinned);
+      await _refreshConversations();
+    } catch (error) {
+      debugPrint('Pin conversation error: $error');
+      _showHistoryError('Could not update pin status.');
+    }
+  }
+
+  Future<void> _renameConversation(int id, String currentTitle) async {
+    final controller = TextEditingController(text: currentTitle);
+    final newTitle = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Row(
+          children: [
+            Icon(Icons.drive_file_rename_outline_rounded, color: Color(0xFF4F46E5)),
+            SizedBox(width: 8),
+            Text('Rename Chat', style: TextStyle(fontSize: 18)),
+          ],
+        ),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 60,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: InputDecoration(
+            hintText: 'Enter conversation title...',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF4F46E5),
+            ),
+            onPressed: () {
+              final text = controller.text.trim();
+              if (text.isNotEmpty) {
+                Navigator.of(ctx).pop(text);
+              } else {
+                Navigator.of(ctx).pop();
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (newTitle == null || newTitle == currentTitle || !mounted) return;
+
+    try {
+      await _chatDatabase.renameConversation(id, newTitle);
+      await _refreshConversations();
+    } catch (error) {
+      debugPrint('Rename conversation error: $error');
+      _showHistoryError('Could not rename conversation.');
+    }
   }
 
   Future<void> _deleteConversation(int id) async {
@@ -463,11 +529,30 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     if (!mounted) return;
 
-    // Dispatch through Central Tool Registry
-    final toolResult = await ToolRegistry.dispatch(prompt);
+    await _generateAssistantReply(
+      prompt: prompt,
+      userMessage: userMessage,
+      conversationId: savedConversationId,
+      docToUse: docToUse,
+    );
+  }
+
+  Future<void> _generateAssistantReply({
+    required String prompt,
+    required ChatMessage userMessage,
+    required int conversationId,
+    AttachedDocument? docToUse,
+  }) async {
+    if (!mounted) return;
+
+    // Dispatch through Central Tool Registry (Two-Tier Hybrid Pipeline)
+    final toolResult = await ToolRegistry.dispatch(
+      prompt,
+      aiService: widget.aiService,
+    );
     if (toolResult.handled && toolResult.reply != null) {
       final replyMsg = ChatMessage(
-        conversationId: savedConversationId,
+        conversationId: conversationId,
         role: 'assistant',
         content: toolResult.reply!,
         createdAt: DateTime.now(),
@@ -488,7 +573,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final assistantCreatedAt = DateTime.now();
     final assistantMessageIndex = _messages.length;
     final responseBuffer = StringBuffer();
-    final contextMessages = ChatUtils.buildContextMessages(messages: _messages, prompt: prompt, currentMessage: userMessage);
 
     // Build context with RAG document injection if a document is attached
     String? ragSystemPrompt;
@@ -503,6 +587,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         relevantChunks: relevantChunks,
       );
     }
+
+    // Dynamically align conversation history budget with active contextSize
+    final config = widget.aiService.inferenceConfig;
+    final effectiveSystemChars =
+        (ragSystemPrompt ?? LocalAiService.defaultChatSystemPrompt).length;
+    final dynamicMaxChars = ChatUtils.computeMaxInputCharacters(
+      contextSize: config.contextSize,
+      maxGenerationTokens: config.maxTokens,
+      systemPromptChars: effectiveSystemChars,
+    );
+    final dynamicMaxMessages =
+        config.contextSize >= 4096 ? 12 : (config.contextSize >= 2048 ? 8 : 4);
+
+    final contextMessages = ChatUtils.buildContextMessages(
+      messages: _messages,
+      prompt: prompt,
+      currentMessage: userMessage,
+      maxInputCharacters: dynamicMaxChars,
+      maxHistoryMessages: dynamicMaxMessages,
+    );
 
     _isCancelled = false;
 
@@ -519,7 +623,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
         setState(() {
           final message = ChatMessage(
-            conversationId: savedConversationId,
+            conversationId: conversationId,
             role: 'assistant',
             content: responseBuffer.toString(),
             createdAt: assistantCreatedAt,
@@ -554,7 +658,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (!mounted) return;
 
     final assistantMessage = ChatMessage(
-      conversationId: savedConversationId,
+      conversationId: conversationId,
       role: 'assistant',
       content: responseBuffer.toString(),
       createdAt: assistantCreatedAt,
@@ -589,6 +693,152 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       debugPrintStack(stackTrace: stackTrace);
       _showHistoryError('Chat history could not be refreshed.');
     }
+  }
+
+  Future<void> _regenerateLastResponse() async {
+    if (_isThinking || _messages.isEmpty || _currentConversationId == null) {
+      return;
+    }
+
+    final lastMessage = _messages.last;
+    if (lastMessage.role != 'assistant') return;
+
+    // Find the user message that prompted this assistant response
+    ChatMessage? userMessage;
+    for (int i = _messages.length - 2; i >= 0; i--) {
+      if (_messages[i].role == 'user') {
+        userMessage = _messages[i];
+        break;
+      }
+    }
+
+    if (userMessage == null) return;
+
+    // Delete the last assistant message from database and local list
+    try {
+      if (lastMessage.id != null) {
+        await _chatDatabase.deleteMessage(lastMessage.id!);
+      }
+    } catch (e) {
+      debugPrint('Error deleting message to regenerate: $e');
+    }
+
+    setState(() {
+      _messages.removeLast();
+      _isThinking = true;
+      _hasResponseStarted = false;
+    });
+
+    _scrollToBottom(force: true);
+
+    await _generateAssistantReply(
+      prompt: userMessage.content,
+      userMessage: userMessage,
+      conversationId: _currentConversationId!,
+      docToUse: _attachedDocument,
+    );
+  }
+
+  Future<void> _showEditPromptDialog(ChatMessage message, int index) async {
+    if (_isThinking || _currentConversationId == null) return;
+
+    final editController = TextEditingController(text: message.content);
+
+    final newPrompt = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.edit_note_rounded, color: Color(0xFF4F46E5)),
+            SizedBox(width: 8),
+            Text('Edit Prompt', style: TextStyle(fontSize: 18)),
+          ],
+        ),
+        content: TextField(
+          controller: editController,
+          autofocus: true,
+          maxLines: 5,
+          minLines: 1,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: InputDecoration(
+            hintText: 'Edit your prompt...',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF4F46E5),
+            ),
+            onPressed: () {
+              final text = editController.text.trim();
+              if (text.isNotEmpty && text != message.content.trim()) {
+                Navigator.pop(ctx, text);
+              } else {
+                Navigator.pop(ctx);
+              }
+            },
+            child: const Text('Save & Resubmit'),
+          ),
+        ],
+      ),
+    );
+
+    if (newPrompt == null || !mounted) return;
+
+    setState(() {
+      _isThinking = true;
+      _hasResponseStarted = false;
+    });
+
+    // Delete message and any subsequent messages in this conversation
+    try {
+      await _chatDatabase.deleteMessagesFrom(
+        conversationId: _currentConversationId!,
+        messageId: message.id,
+        createdAtMillis: message.createdAt.millisecondsSinceEpoch,
+      );
+    } catch (e) {
+      debugPrint('Error deleting downstream messages on edit: $e');
+    }
+
+    final createdAt = DateTime.now();
+    final updatedUserMessage = ChatMessage(
+      conversationId: _currentConversationId!,
+      role: 'user',
+      content: newPrompt,
+      createdAt: createdAt,
+    );
+
+    try {
+      await _chatDatabase.saveMessage(updatedUserMessage);
+    } catch (e) {
+      debugPrint('Error saving edited user message: $e');
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      // Truncate list from this index onwards, then add the new user message
+      if (index < _messages.length) {
+        _messages.removeRange(index, _messages.length);
+      }
+      _messages.add(updatedUserMessage);
+    });
+
+    _scrollToBottom(force: true);
+
+    await _generateAssistantReply(
+      prompt: newPrompt,
+      userMessage: updatedUserMessage,
+      conversationId: _currentConversationId!,
+      docToUse: _attachedDocument,
+    );
   }
 
   String _formatInferenceErrorMessage(Object error) {
@@ -936,13 +1186,28 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                           itemBuilder: (context, index) {
                             final conversation = _conversations[index];
                             final id = conversation['id'] as int;
+                            final title = conversation['title'] as String;
+                            final isPinned = (conversation['is_pinned'] as int? ?? 0) == 1;
                             final snippet = conversation['matching_snippet'] as String?;
                             return ListTile(
-                              leading: const Icon(Icons.chat_bubble_outline),
+                              leading: Icon(
+                                isPinned
+                                    ? Icons.push_pin_rounded
+                                    : Icons.chat_bubble_outline,
+                                size: isPinned ? 19 : 20,
+                                color: isPinned
+                                    ? const Color(0xFF4F46E5)
+                                    : null,
+                              ),
                               title: Text(
-                                conversation['title'] as String,
+                                title,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontWeight: isPinned
+                                      ? FontWeight.w600
+                                      : FontWeight.normal,
+                                ),
                               ),
                               subtitle: (snippet != null && snippet.trim().isNotEmpty)
                                   ? Text(
@@ -964,12 +1229,65 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                               onTap: _isThinking
                                   ? null
                                   : () => _selectConversation(id),
-                              trailing: IconButton(
-                                tooltip: 'Delete conversation',
-                                onPressed: _isThinking
-                                    ? null
-                                    : () => _deleteConversation(id),
-                                icon: const Icon(Icons.delete_outline),
+                              trailing: PopupMenuButton<String>(
+                                enabled: !_isThinking,
+                                tooltip: 'Chat options',
+                                icon: const Icon(Icons.more_vert_rounded, size: 19),
+                                onSelected: (action) {
+                                  if (action == 'pin') {
+                                    _togglePinConversation(id, isPinned);
+                                  } else if (action == 'rename') {
+                                    _renameConversation(id, title);
+                                  } else if (action == 'delete') {
+                                    _deleteConversation(id);
+                                  }
+                                },
+                                itemBuilder: (context) => [
+                                  PopupMenuItem(
+                                    value: 'pin',
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          isPinned
+                                              ? Icons.push_pin_outlined
+                                              : Icons.push_pin_rounded,
+                                          size: 18,
+                                          color: const Color(0xFF4F46E5),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Text(isPinned ? 'Unpin chat' : 'Pin to top'),
+                                      ],
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'rename',
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.drive_file_rename_outline_rounded,
+                                          size: 18,
+                                          color: Color(0xFF10B981),
+                                        ),
+                                        SizedBox(width: 10),
+                                        Text('Rename'),
+                                      ],
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'delete',
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.delete_outline_rounded,
+                                          size: 18,
+                                          color: Color(0xFFEF4444),
+                                        ),
+                                        SizedBox(width: 10),
+                                        Text('Delete'),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
                             );
                           },
@@ -1262,7 +1580,76 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                           minHeight: 32,
                                         ),
                                       ),
+                                      if (index == visibleMessages.length - 1)
+                                        IconButton(
+                                          tooltip: 'Regenerate response',
+                                          onPressed: _isThinking
+                                              ? null
+                                              : _regenerateLastResponse,
+                                          icon: Icon(
+                                            Icons.refresh_rounded,
+                                            size: 18,
+                                            color: isDark
+                                                ? const Color(0xFF94A3B8)
+                                                : const Color(0xFF64748B),
+                                          ),
+                                          visualDensity: VisualDensity.compact,
+                                          padding: const EdgeInsets.all(4),
+                                          constraints: const BoxConstraints(
+                                            minWidth: 32,
+                                            minHeight: 32,
+                                          ),
+                                        ),
                                     ],
+                                  ),
+                                if (isMe)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          tooltip: 'Edit prompt',
+                                          onPressed: _isThinking
+                                              ? null
+                                              : () => _showEditPromptDialog(
+                                                    message,
+                                                    index,
+                                                  ),
+                                          icon: Icon(
+                                            Icons.edit_outlined,
+                                            size: 16,
+                                            color: isDark
+                                                ? const Color(0xFF94A3B8)
+                                                : const Color(0xFF64748B),
+                                          ),
+                                          visualDensity: VisualDensity.compact,
+                                          padding: const EdgeInsets.all(4),
+                                          constraints: const BoxConstraints(
+                                            minWidth: 28,
+                                            minHeight: 28,
+                                          ),
+                                        ),
+                                        IconButton(
+                                          tooltip: 'Copy message',
+                                          onPressed: () =>
+                                              _copyMessage(message.content),
+                                          icon: Icon(
+                                            Icons.copy_rounded,
+                                            size: 16,
+                                            color: isDark
+                                                ? const Color(0xFF94A3B8)
+                                                : const Color(0xFF64748B),
+                                          ),
+                                          visualDensity: VisualDensity.compact,
+                                          padding: const EdgeInsets.all(4),
+                                          constraints: const BoxConstraints(
+                                            minWidth: 28,
+                                            minHeight: 28,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                               ],
                             ),

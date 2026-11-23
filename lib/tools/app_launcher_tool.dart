@@ -47,6 +47,13 @@ class AppLauncherTool implements PocketTool {
     return await launchApp(app);
   }
 
+  @override
+  Future<String?> executeWithArgs(Map<String, dynamic> args) async {
+    final app = args['app']?.toString();
+    if (app == null || app.trim().isEmpty) return null;
+    return await launchApp(app.trim().toLowerCase());
+  }
+
   /// Matches user prompts to supported applications.
   static String? matchApp(String query) {
     final text = query

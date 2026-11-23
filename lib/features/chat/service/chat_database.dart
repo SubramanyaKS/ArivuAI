@@ -18,7 +18,7 @@ class ChatDatabase {
 
     _database = await openDatabase(
       path,
-      version: 3,
+      version: 5,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -28,7 +28,8 @@ class ChatDatabase {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL
+            updated_at INTEGER NOT NULL,
+            is_pinned INTEGER NOT NULL DEFAULT 0
           )
         ''');
 
@@ -55,6 +56,18 @@ class ChatDatabase {
           )
         ''');
 
+        await db.execute('''
+          CREATE TABLE documents (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            path TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            full_text TEXT NOT NULL,
+            chunk_count INTEGER NOT NULL,
+            created_at INTEGER NOT NULL
+          )
+        ''');
+
         await db.execute(
           'CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at)',
         );
@@ -63,6 +76,9 @@ class ChatDatabase {
         );
         await db.execute(
           'CREATE INDEX IF NOT EXISTS idx_reminders_active ON reminders(is_completed, scheduled_at)',
+        );
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_documents_created ON documents(created_at DESC)',
         );
       },
       onUpgrade: (db, oldVersion, newVersion) async {
@@ -86,6 +102,27 @@ class ChatDatabase {
           );
           await db.execute(
             'CREATE INDEX IF NOT EXISTS idx_reminders_active ON reminders(is_completed, scheduled_at)',
+          );
+        }
+        if (oldVersion < 4) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS documents (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              path TEXT NOT NULL,
+              size_bytes INTEGER NOT NULL,
+              full_text TEXT NOT NULL,
+              chunk_count INTEGER NOT NULL,
+              created_at INTEGER NOT NULL
+            )
+          ''');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_documents_created ON documents(created_at DESC)',
+          );
+        }
+        if (oldVersion < 5) {
+          await db.execute(
+            'ALTER TABLE conversations ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0',
           );
         }
       },
@@ -144,11 +181,38 @@ class ChatDatabase {
     return maps.map(ChatMessage.fromMap).toList();
   }
 
-  // Load the conversation list, newest first.
+  // Load the conversation list, pinned first then newest first.
   Future<List<Map<String, dynamic>>> getConversations() async {
     final db = await database;
 
-    return db.query('conversations', orderBy: 'updated_at DESC, id DESC');
+    return db.query(
+      'conversations',
+      orderBy: 'is_pinned DESC, updated_at DESC, id DESC',
+    );
+  }
+
+  /// Toggles whether a conversation is pinned to the top of the drawer.
+  Future<void> togglePinConversation(int id, bool isPinned) async {
+    final db = await database;
+    await db.update(
+      'conversations',
+      {'is_pinned': isPinned ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Renames a conversation's title.
+  Future<void> renameConversation(int id, String newTitle) async {
+    final clean = newTitle.trim();
+    if (clean.isEmpty) return;
+    final db = await database;
+    await db.update(
+      'conversations',
+      {'title': clean},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
   /// Searches conversations matching the query string in title or message contents.
@@ -161,14 +225,14 @@ class ChatDatabase {
     final pattern = '%$cleanQuery%';
 
     return db.rawQuery('''
-      SELECT DISTINCT c.id, c.title, c.created_at, c.updated_at,
+      SELECT DISTINCT c.id, c.title, c.created_at, c.updated_at, c.is_pinned,
              (SELECT m.content FROM messages m 
               WHERE m.conversation_id = c.id AND m.content LIKE ? 
               ORDER BY m.created_at DESC LIMIT 1) AS matching_snippet
       FROM conversations c
       LEFT JOIN messages m ON m.conversation_id = c.id
       WHERE c.title LIKE ? OR m.content LIKE ?
-      ORDER BY c.updated_at DESC, c.id DESC
+      ORDER BY c.is_pinned DESC, c.updated_at DESC, c.id DESC
     ''', [pattern, pattern, pattern]);
   }
 
@@ -177,6 +241,35 @@ class ChatDatabase {
     final db = await database;
 
     await db.delete('conversations', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Delete a specific message by its primary key ID.
+  Future<void> deleteMessage(int messageId) async {
+    final db = await database;
+    await db.delete('messages', where: 'id = ?', whereArgs: [messageId]);
+  }
+
+  /// Delete a message and all subsequent messages in a conversation (used when editing a past prompt).
+  Future<void> deleteMessagesFrom({
+    required int conversationId,
+    int? messageId,
+    required int createdAtMillis,
+  }) async {
+    final db = await database;
+    if (messageId != null) {
+      await db.delete(
+        'messages',
+        where:
+            'conversation_id = ? AND (created_at > ? OR (created_at = ? AND id >= ?))',
+        whereArgs: [conversationId, createdAtMillis, createdAtMillis, messageId],
+      );
+    } else {
+      await db.delete(
+        'messages',
+        where: 'conversation_id = ? AND created_at >= ?',
+        whereArgs: [conversationId, createdAtMillis],
+      );
+    }
   }
 
   /// Permanently delete all chat history (conversations and messages).
@@ -233,5 +326,45 @@ class ChatDatabase {
       where: 'id = ?',
       whereArgs: [id],
     );
+  }
+
+  // ------------------ Document Intelligence Library Methods ------------------
+
+  Future<void> saveDocumentRecord({
+    required String id,
+    required String name,
+    required String path,
+    required int sizeBytes,
+    required String fullText,
+    required int chunkCount,
+  }) async {
+    final db = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await db.insert(
+      'documents',
+      {
+        'id': id,
+        'name': name,
+        'path': path,
+        'size_bytes': sizeBytes,
+        'full_text': fullText,
+        'chunk_count': chunkCount,
+        'created_at': now,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getSavedDocumentRecords() async {
+    final db = await database;
+    return db.query(
+      'documents',
+      orderBy: 'created_at DESC',
+    );
+  }
+
+  Future<void> deleteDocumentRecord(String id) async {
+    final db = await database;
+    await db.delete('documents', where: 'id = ?', whereArgs: [id]);
   }
 }

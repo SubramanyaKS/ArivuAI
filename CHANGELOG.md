@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-11-21
+
+### Added
+- **Dedicated Document Intelligence Workspace**:
+  - Added persistent offline **Knowledge Shelf** (`DocumentIntelligenceScreen`) backed by SQLite schema v4 (`documents` table with `idx_documents_created`).
+  - Added 2-tab **Document Workspace** (`DocumentWorkspaceScreen`) featuring an **Ask Arivu** RAG Q&A tab and a **Document Viewer** tab with live offline keyword search.
+  - Added one-tap specialized AI document workflows: *Executive Summary*, *Key Takeaways*, *Generate Q&A*, and *Action Items*.
+  - Added interactive **tappable source citation chips** (`Source: Excerpt N`) below AI answers opening a verbatim preview bottom sheet.
+  - Integrated direct navigation shortcuts in the `ChatScreen` AppBar and Drawer.
+
+- **Two-Tier Hybrid Tool Calling Engine**:
+  - Added `NlpNormalizer` (`lib/tools/nlp_normalizer.dart`) converting written number words, colloquial durations (*"half an hour"*, *"an hour and a half"*), and relative clock times (*"half past six"*, *"quarter to eight"*) for `<1ms` Tier 1 Fast-Path matching.
+  - Added `ToolCallParser` (`lib/tools/tool_call_parser.dart`) supporting `<tool_call>` XML blocks, Markdown fences, raw JSON, and lenient auto-repair for small model formatting quirks.
+  - Added `executeWithArgs` structured argument execution across all 8 `PocketTool` implementations and Tier 2 local LLM fallback in `ToolRegistry.dispatch` and `LocalAiService.askOnce`.
+
+- **Full Offline Reminder Management**:
+  - Upgraded `ReminderTool` and `NotificationService` to support **listing upcoming reminders** with relative time formatting (*"give me the list of reminders"*), **cancelling specific reminders** by title or number (*"cancel reminder to drink water"*), and **cancelling all reminders** (*"cancel all reminders"*).
+  - Automatically marks expired past reminders as completed in SQLite and added cross-platform safety guards for unit testing.
+
+- **Chat Ergonomics & SQLite Indexing**:
+  - Added intelligent **Streaming Auto-Scroll** and an interactive **Stop Generation** button during token streaming.
+  - Added **Regenerate Response** for the latest assistant reply and **Edit Prompt** for user messages with automatic downstream SQLite history truncation (`deleteMessage`, `deleteMessagesFrom`).
+  - Added SQLite B-tree database indexing (schema v3) across `messages`, `conversations`, and `reminders`.
+
+---
+
 ## [1.0.0] - 2026-11-10
 
 ### Added

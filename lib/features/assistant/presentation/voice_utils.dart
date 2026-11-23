@@ -82,3 +82,10 @@ class VoiceUtils {
     }
   }
 }
+
+List<String> quickSuggestions = [
+    'What can you do offline?',
+    'Check battery status',
+    'Remind me to drink water in 10 minutes',
+    'Turn on flashlight',
+];

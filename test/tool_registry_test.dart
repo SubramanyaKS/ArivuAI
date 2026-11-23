@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:arivu_ai/tools/tool_registry.dart';
 import 'package:arivu_ai/tools/alarm_tool.dart';
+import 'package:arivu_ai/tools/tool_call_parser.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -129,6 +130,46 @@ void main() {
       expect(resStopTimer.handled, isTrue);
       expect(resStopTimer.toolName, equals('set_alarm_or_timer'));
       expect(resStopTimer.reply, contains('Timer dismissed'));
+    });
+
+    test('ToolRegistry dispatches colloquial and word-number inputs through Fast-Path', () async {
+      // Relative / word-based alarm
+      final resAlarm = await ToolRegistry.dispatch('wake me up at half past six in the morning');
+      expect(resAlarm.handled, isTrue);
+      expect(resAlarm.toolName, equals('set_alarm_or_timer'));
+      expect(resAlarm.isFastPath, isTrue);
+      expect(resAlarm.reply, contains('6:30 AM'));
+
+      // Quarter to alarm
+      final resQuarter = await ToolRegistry.dispatch('set an alarm for quarter to eight');
+      expect(resQuarter.handled, isTrue);
+      expect(resQuarter.toolName, equals('set_alarm_or_timer'));
+      expect(resQuarter.reply, contains('7:45 AM'));
+
+      // Word number reminder
+      final resRemind = await ToolRegistry.dispatch('remind me in ten minutes to drink water');
+      expect(resRemind.handled, isTrue);
+      expect(resRemind.toolName, equals('create_reminder'));
+      expect(resRemind.reply, contains('drink water'));
+      expect(resRemind.reply, contains('10 minutes'));
+    });
+
+    test('ToolRegistry executes structured ToolCall objects', () async {
+      // Calculator execution via ToolCall
+      const calcCall = ToolCall(name: 'calculator', arguments: {'expression': '15 * 6'});
+      final calcResult = await ToolRegistry.executeToolCall(calcCall);
+      expect(calcResult, isNotNull);
+      expect(calcResult, contains('90'));
+
+      // Reminder execution via ToolCall
+      const remindCall = ToolCall(
+        name: 'create_reminder',
+        arguments: {'title': 'medication', 'delay_minutes': 45},
+      );
+      final remindResult = await ToolRegistry.executeToolCall(remindCall);
+      expect(remindResult, isNotNull);
+      expect(remindResult, contains('medication'));
+      expect(remindResult, contains('45 minutes'));
     });
   });
 }

@@ -1,4 +1,6 @@
 import 'dart:developer';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
@@ -36,26 +38,32 @@ class NotificationService {
       log('Timezone initialization warning: $e');
     }
 
-    const androidSettings =
-        AndroidInitializationSettings('@mipmap/launcher_icon');
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        const androidSettings =
+            AndroidInitializationSettings('@mipmap/launcher_icon');
 
-    const settings = InitializationSettings(
-      android: androidSettings,
-    );
+        const settings = InitializationSettings(
+          android: androidSettings,
+        );
 
-    await _notifications.initialize(settings: settings);
+        await _notifications.initialize(settings: settings);
 
-    // Request notification permission on Android 13+
-    await _notifications
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.requestNotificationsPermission();
+        // Request notification permission on Android 13+
+        await _notifications
+            .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>()
+            ?.requestNotificationsPermission();
 
-    // Request exact alarm permission on Android 12+
-    await _notifications
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.requestExactAlarmsPermission();
+        // Request exact alarm permission on Android 12+
+        await _notifications
+            .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>()
+            ?.requestExactAlarmsPermission();
+      } catch (e) {
+        log('Notification initialization warning: $e');
+      }
+    }
 
     _isInitialized = true;
   }
@@ -84,37 +92,39 @@ class NotificationService {
       enableVibration: true,
     );
 
-    try {
-      // Use exact alarmClock schedule (rings even in Android background/Doze mode)
-      await _notifications.zonedSchedule(
-        id: reminderId,
-        title: 'Arivu AI Reminder',
-        body: title,
-        scheduledDate: scheduledDate,
-        notificationDetails: const NotificationDetails(android: androidDetails),
-        androidScheduleMode: AndroidScheduleMode.alarmClock,
-      );
-    } catch (e) {
-      log('Fallback from alarmClock to exactAllowWhileIdle: $e');
+    if (!kIsWeb && Platform.isAndroid) {
       try {
+        // Use exact alarmClock schedule (rings even in Android background/Doze mode)
         await _notifications.zonedSchedule(
           id: reminderId,
           title: 'Arivu AI Reminder',
           body: title,
           scheduledDate: scheduledDate,
           notificationDetails: const NotificationDetails(android: androidDetails),
-          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          androidScheduleMode: AndroidScheduleMode.alarmClock,
         );
-      } catch (e2) {
-        log('Fallback to inexactAllowWhileIdle: $e2');
-        await _notifications.zonedSchedule(
-          id: reminderId,
-          title: 'Arivu AI Reminder',
-          body: title,
-          scheduledDate: scheduledDate,
-          notificationDetails: const NotificationDetails(android: androidDetails),
-          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-        );
+      } catch (e) {
+        log('Fallback from alarmClock to exactAllowWhileIdle: $e');
+        try {
+          await _notifications.zonedSchedule(
+            id: reminderId,
+            title: 'Arivu AI Reminder',
+            body: title,
+            scheduledDate: scheduledDate,
+            notificationDetails: const NotificationDetails(android: androidDetails),
+            androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          );
+        } catch (e2) {
+          log('Fallback to inexactAllowWhileIdle: $e2');
+          await _notifications.zonedSchedule(
+            id: reminderId,
+            title: 'Arivu AI Reminder',
+            body: title,
+            scheduledDate: scheduledDate,
+            notificationDetails: const NotificationDetails(android: androidDetails),
+            androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          );
+        }
       }
     }
 
@@ -154,9 +164,54 @@ class NotificationService {
 
   Future<void> cancelReminder(int id) async {
     await initialize();
-    await _notifications.cancel(id: id);
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        await _notifications.cancel(id: id);
+      } catch (e) {
+        log('Error cancelling notification: $e');
+      }
+    }
     try {
       await ChatDatabase.instance.deleteReminder(id);
     } catch (_) {}
+  }
+
+  Future<void> cancelAllReminders() async {
+    await initialize();
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        await _notifications.cancelAll();
+      } catch (e) {
+        log('Error cancelling all notifications: $e');
+      }
+    }
+    try {
+      final db = await ChatDatabase.instance.database;
+      await db.delete('reminders');
+    } catch (_) {}
+  }
+
+  /// Retrieves upcoming active reminders, automatically marking expired reminders as completed.
+  Future<List<Map<String, dynamic>>> getUpcomingReminders() async {
+    try {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final rawReminders = await ChatDatabase.instance.getActiveReminders();
+      final upcoming = <Map<String, dynamic>>[];
+
+      for (final r in rawReminders) {
+        final scheduledAt = r['scheduled_at'] as int? ?? 0;
+        final id = r['id'] as int;
+        if (scheduledAt < now - 60000) {
+          // Mark past reminders as completed in database
+          await ChatDatabase.instance.markReminderCompleted(id);
+        } else {
+          upcoming.add(r);
+        }
+      }
+      return upcoming;
+    } catch (e) {
+      log('Error getting upcoming reminders: $e');
+      return [];
+    }
   }
 }

@@ -137,6 +137,23 @@ class TorchTool implements PocketTool {
 
   @override
   Future<String?> tryExecute(String prompt) => tryExecuteTorch(prompt);
+
+  @override
+  Future<String?> executeWithArgs(Map<String, dynamic> args) async {
+    final action = args['action']?.toString().toLowerCase().trim();
+    if (action == 'on' || action == 'turn_on') {
+      final success = await turnOn();
+      return success ? "Flashlight is now turned on." : "Could not turn on the flashlight.";
+    } else if (action == 'off' || action == 'turn_off') {
+      final success = await turnOff();
+      return success ? "Flashlight is now turned off." : "Could not turn off the flashlight.";
+    } else if (action == 'toggle') {
+      final success = await toggle();
+      if (!success) return "Could not toggle the flashlight.";
+      return _isOn ? "Flashlight is now turned on." : "Flashlight is now turned off.";
+    }
+    return null;
+  }
 }
 
 /// Backwards compatibility typedef

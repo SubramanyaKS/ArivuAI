@@ -10,6 +10,27 @@ class ChatUtils {
     return '${String.fromCharCodes(characters.take(48))}...';
   }
 
+  /// Dynamically computes a safe character budget for conversation history
+  /// based on the active model's [contextSize] tokens, [maxGenerationTokens]
+  /// reserve, and [systemPromptChars] (~3.5 chars/token heuristic).
+  /// Prevents KV-cache overflow on 1K context models and unlocks full history
+  /// capacity on 4K context models.
+  static int computeMaxInputCharacters({
+    required int contextSize,
+    required int maxGenerationTokens,
+    int systemPromptChars = 1200,
+  }) {
+    const double charsPerToken = 3.5;
+    final systemPromptTokens = (systemPromptChars / charsPerToken).ceil();
+    // Reserve tokens for system prompt, generation output, and ChatML template tags
+    final availableHistoryTokens =
+        contextSize - maxGenerationTokens - systemPromptTokens - 128;
+    if (availableHistoryTokens <= 100) {
+      return 350;
+    }
+    return (availableHistoryTokens * charsPerToken).floor();
+  }
+
   /// Builds context window history ensuring character and message limits are respected.
   static List<ChatMessage> buildContextMessages({
     required List<ChatMessage> messages,

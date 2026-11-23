@@ -1,6 +1,6 @@
+import 'package:arivu_ai/features/assistant/presentation/voice_utils.dart';
 import 'package:arivu_ai/tools/tool_registry.dart';
 import 'package:arivu_ai/tools/safety_tool.dart';
-import 'package:arivu_ai/features/assistant/presentation/voice_utils.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -45,12 +45,7 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen>
 
   late final Animation<double> _pulseAnimation;
 
-  final List<String> _quickSuggestions = [
-    'What can you do offline?',
-    'Check battery status',
-    'Remind me to drink water in 10 minutes',
-    'Turn on flashlight',
-  ];
+  
 
   @override
   void initState() {
@@ -316,7 +311,10 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen>
       _aiResponse = '';
     });
 
-    final toolResult = await ToolRegistry.dispatch(prompt);
+    final toolResult = await ToolRegistry.dispatch(
+      prompt,
+      aiService: widget.aiService,
+    );
     if (!mounted || runId != _speechRunId) return;
 
     if (toolResult.handled && toolResult.reply != null) {
@@ -830,7 +828,7 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen>
                                     spacing: 8,
                                     runSpacing: 8,
                                     alignment: WrapAlignment.center,
-                                    children: _quickSuggestions
+                                    children: quickSuggestions
                                         .map((suggestion) => ActionChip(
                                               label: Text(
                                                 suggestion,

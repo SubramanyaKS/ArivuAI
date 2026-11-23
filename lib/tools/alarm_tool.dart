@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/foundation.dart';
+import 'nlp_normalizer.dart';
 import 'pocket_tool.dart';
 
 class AlarmTimerTool implements PocketTool {
@@ -56,8 +57,9 @@ class AlarmTimerTool implements PocketTool {
   /// - "stop the timer" / "cancel timer" / "turn off timer"
   /// - "show alarms" / "open clock"
   static Future<String?> tryExecuteAlarmOrTimer(String prompt) async {
+    final normalized = NlpNormalizer.normalize(prompt);
     // Normalize all variations of PM/AM (p.m., p.m, p. m., pm) from voice dictation
-    String cleaned = prompt
+    String cleaned = normalized
         .trim()
         .replaceAll(RegExp(r'\bp\.?\s*m\.?(?:\s|$|[.!?,;])', caseSensitive: false), 'pm ')
         .replaceAll(RegExp(r'\ba\.?\s*m\.?(?:\s|$|[.!?,;])', caseSensitive: false), 'am ')
@@ -185,7 +187,7 @@ class AlarmTimerTool implements PocketTool {
             action: 'android.intent.action.SHOW_ALARMS',
           );
           await fallbackIntent.launch();
-          return "Opened Clock app alarms for you.";
+          return "Opened Clock app alarms fo r you.";
         } catch (_) {
           return "Could not open the Clock app to dismiss the alarm.";
         }
@@ -300,4 +302,38 @@ class AlarmTimerTool implements PocketTool {
 
   @override
   Future<String?> tryExecute(String prompt) => tryExecuteAlarmOrTimer(prompt);
+
+  @override
+  Future<String?> executeWithArgs(Map<String, dynamic> args) async {
+    final action = args['action']?.toString() ?? 'set_alarm';
+    final message = args['message']?.toString() ?? 'Arivu AI';
+
+    switch (action) {
+      case 'set_alarm':
+        final hour = int.tryParse(args['hour']?.toString() ?? '') ?? 0;
+        final minute = int.tryParse(args['minute']?.toString() ?? '') ?? 0;
+        final displayTime =
+            '${hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour)}:${minute.toString().padLeft(2, '0')} ${hour >= 12 ? 'PM' : 'AM'}';
+        return await setNativeAlarm(
+          hour: hour,
+          minute: minute,
+          message: message,
+          formattedTime: displayTime,
+        );
+      case 'set_timer':
+        final seconds = int.tryParse(args['seconds']?.toString() ?? '') ?? 0;
+        if (seconds > 0) {
+          return await setNativeTimer(seconds: seconds, message: message);
+        }
+        return null;
+      case 'dismiss_alarm':
+        return await dismissNativeAlarm();
+      case 'dismiss_timer':
+        return await dismissNativeTimer();
+      case 'show_alarms':
+        return await showNativeAlarms();
+      default:
+        return null;
+    }
+  }
 }
