@@ -26,7 +26,7 @@ The app boots with an on-device language model (supporting SmolLM2-360M, SmolLM2
 
 ## Features
 
-- **Local-first AI Chat & Conversational Ergonomics**: Real-time streaming token generation with intelligent auto-scroll, interactive **Stop Generation** button, **Regenerate Response**, **Edit Prompt** (with automatic downstream history truncation), and B-tree indexed SQLite persistence.
+- **Local-first AI Chat & Conversational Ergonomics**: Real-time streaming token generation with intelligent auto-scroll, interactive **Stop Generation** button, **Regenerate Response**, **Edit Prompt** (with automatic downstream history truncation), **Pin & Rename Chat Sessions**, dynamic context-window budgeting, and B-tree indexed SQLite persistence (schema v5).
 - **Voice Assistant & Hands-Free Mode**: Conversational voice pipeline (STT ➔ on-device LLM ➔ low-latency streaming TTS) with an animated glowing orb, rotating ambient rings, live audio waveform equalizer, and auto-continuous hands-free loop with silence detection and tap-to-interrupt.
 - **Two-Tier Hybrid Device Action Tools & Registry**:
   - 🧩 **Hybrid Tool Pipeline (`ToolRegistry` + `NlpNormalizer` + `ToolCallParser`)**: Tier 1 pre-processes colloquial speech and word numbers (*"half past six"*, *"quarter to eight"*, *"ten minutes"*) for `<1ms` deterministic execution; Tier 2 falls back seamlessly to structured `<tool_call>` local LLM extraction with auto-repairing JSON parsing for complex phrasing.
@@ -38,9 +38,13 @@ The app boots with an on-device language model (supporting SmolLM2-360M, SmolLM2
   - 🚀 **Application Launcher**: Instant app opening via Android intents (*"Open YouTube"*, *"Launch Camera"*, *"Open WhatsApp"*, *"Open Maps"*, *"Open Browser"*, *"Open Spotify"*).
   - ⚙️ **System Settings Shortcuts**: Direct navigation to Android settings panels without searching (*"Open Wi-Fi settings"*, *"Open Bluetooth"*, *"Open Display settings"*, *"Volume settings"*).
 - **Dedicated Document Intelligence Workspace (Offline RAG & Knowledge Shelf)**:
-  - 📚 **Persistent Knowledge Shelf**: Upload and persist `.pdf`, `.txt`, and `.md` files locally in SQLite so documents remain available across sessions.
-  - ⚡ **One-Tap Document Actions**: Instantly generate an *Executive Summary*, *Key Takeaways*, *Q&A Study Flashcards*, or *Action Items* with a single tap.
-  - 🔍 **2-Tab Workspace & Tappable Citations**: Chat with grounded local BM25 RAG on one tab (with tappable `Source: Excerpt N` chips that open verbatim text previews) and search/read extracted document sections offline on the Viewer tab. Also supports quick ad-hoc attachments directly inside regular chat.
+  - 📚 **Persistent Knowledge Shelf**: Upload and persist `.pdf`, `.txt`, and `.md` files locally in SQLite so documents remain available across sessions, with background Dart `Isolate` parsing to keep the UI smooth on large PDFs.
+  - ⚖️ **Multi-Document Cross-Referencing**: Select 2+ documents in the Knowledge Shelf to compare, synthesize, and query across files simultaneously with filename-tagged citations (`contract_2025.pdf • Excerpt 1`) and per-document Viewer filters.
+  - ⚡ **One-Tap Document Actions**: Instantly generate an *Executive Summary*, *Key Takeaways*, *Q&A Study Flashcards*, *Action Items*, or cross-document *Compare Docs* / *Synthesize All* with a single tap.
+  - 🔍 **2-Tab Workspace & Tappable Citations**: Chat with grounded local BM25 RAG on one tab (with tappable citation chips that open verbatim text previews) and search/read extracted document sections offline on the Viewer tab. Also supports quick ad-hoc attachments directly inside regular chat.
+- **Custom AI Personas & Smart Auto-Routing**: Switch roles in 1 tap from the Chat AppBar (**Code Mentor**, **Executive Assistant**, **Socratic Tutor**, **Creative Writer**, or your own persisted **Custom Persona**), or enable **Auto (Smart Router)** to automatically delegate coding, writing, study, and executive prompts in `<1ms` with tuned temperatures and live **`Handled by <Persona>`** badges.
+- **In-App "Benchmark My Phone" Diagnostics**: Built-in speed diagnostics in Settings measuring real-world **Tokens/sec**, **Words/sec**, **Time-to-First-Token (TTFT)**, and **Model Load Time** on your hardware, with a device speed rating badge and one-tap Markdown report copy.
+- **Production Stability & Resumable Downloads**: Native `llama.cpp` concurrency mutex lock, HTTP `Range` resumable & pausable model downloads, OS memory pressure observer with Low-RAM guardrails, and R8-hardened Android release builds.
 - **Inference Parameters & Hardware Tuning**: Fine-tune CPU generation threads (1, 2, 4, 6, 8), sampling temperature (0.0 to 1.0 with Strict/Balanced/Creative badge), context window size (1024, 2048, 4096 tokens), and max generation tokens (128, 256, 512, 1024) directly from Settings. Parameter modifications are persisted to disk (`inference_config.json`), dynamically re-applied to active models without app restart, and support a one-tap "Reset Defaults" action.
 - **Conversation Search & Chat Export**: Instant keyword search across chat titles and message contents in the history drawer with message snippet previews. Export conversations as Markdown (`.md`) files, copy formatted transcripts to clipboard, or share conversations directly through the native system share sheet.
 - **Multi-Model Manager & Storage Control**: Select, hot-swap, and delete models on-device (SmolLM2-360M, SmolLM2-1.7B, Qwen2.5-0.5B, Qwen3-0.6B, Qwen2.5-1.5B). Inactive models stay on disk for instant offline switching, with one-tap deletion from Settings to reclaim phone storage. Model catalog is decoupled into `assets/models/model_catalog.json` as the single source of truth.
@@ -126,7 +130,10 @@ Arivu AI is actively evolving towards a full-featured offline assistant:
 - [x] **Inference Parameters & Hardware Tuning**: Fine-tune CPU generation threads, sampling temperature slider, context window size, and max generation token limits directly in Settings with live dynamic reload.
 - [x] **Chat Ergonomics & Indexed Persistence**: Streaming auto-scroll, Stop Generation button, Regenerate Response, Edit Prompt with SQLite truncation, and B-tree database indexing.
 - [x] **Two-Tier Hybrid Tool Calling & Full Reminder Management**: Colloquial NLP normalization (`NlpNormalizer`), structured `<tool_call>` LLM fallback (`ToolCallParser`), plus reminder listing and cancellation.
-- [x] **Dedicated Document Intelligence Workspace**: Persistent SQLite Knowledge Shelf, 2-tab Ask/Viewer workspace, one-tap Summary/Takeaways/Q&A/Action Items, and tappable source citation previews.
+- [x] **Dedicated Document Intelligence Workspace**: Persistent SQLite Knowledge Shelf, 2-tab Ask/Viewer workspace, one-tap Summary/Takeaways/Q&A/Action Items, tappable source citation previews, and **Multi-Document Cross-Referencing**.
+- [x] **In-App "Benchmark My Phone" & Pin/Rename Chats**: Real-time on-device speed diagnostics with Markdown report export, plus pinned-first chat organization and custom conversation renaming.
+- [x] **Custom AI Personas & Smart Auto-Routing**: Manual role selector, persisted Custom Persona instructions, and `<1ms` Auto-Router with specialist delegation badges.
+- [x] **Production Stability & Release Hardening**: Native inference concurrency lock, dynamic context window sizing, background Isolate PDF parsing, HTTP Range resumable downloads, OS memory pressure guardrails, and R8-shrunk Android release builds.
 
 ## Model behavior & Storage
 

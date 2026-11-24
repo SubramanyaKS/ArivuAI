@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:arivu_ai/features/chat/models/ai_persona.dart';
 import 'package:arivu_ai/features/chat/models/chat_message.dart';
 import 'package:arivu_ai/features/chat/service/chat_database.dart';
 import 'package:arivu_ai/features/chat/service/local_ai_service.dart';
@@ -40,6 +41,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   bool _isExtractingDocument = false;
   final ScrollController _scrollController = ScrollController();
   bool _isCancelled = false;
+  final Map<int, AiPersona> _delegatedPersonas = {};
 
   final bool _modelReady = true;
   bool _isThinking = false;
@@ -225,7 +227,177 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     setState(() {
       _currentConversationId = null;
       _messages.clear();
+      _delegatedPersonas.clear();
     });
+  }
+
+  Future<void> _showCustomPersonaDialog() async {
+    final controller =
+        TextEditingController(text: widget.aiService.customPersonaPrompt);
+    final saved = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Row(
+          children: [
+            Icon(Icons.tune_rounded, color: Color(0xFF4F46E5)),
+            SizedBox(width: 8),
+            Text('Custom AI Persona', style: TextStyle(fontSize: 18)),
+          ],
+        ),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLines: 5,
+          minLines: 3,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: InputDecoration(
+            hintText:
+                'e.g. Explain everything simply with real-world analogies and bullet points...',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF4F46E5),
+            ),
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('Save Persona'),
+          ),
+        ],
+      ),
+    );
+
+    if (saved == null || !mounted) return;
+    await widget.aiService.setActivePersona('custom', customPrompt: saved);
+    if (mounted) setState(() {});
+  }
+
+  void _showPersonaSelectorSheet() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final personas = AiPersona.allPersonas(
+      customPrompt: widget.aiService.customPersonaPrompt,
+    );
+    final currentId = widget.aiService.activePersona.id;
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: isDark ? const Color(0xFF0F172A) : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.white24 : Colors.black12,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Choose AI Persona & Role',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Pick a specialist role or use Auto to delegate prompts automatically.',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: isDark
+                      ? const Color(0xFF94A3B8)
+                      : const Color(0xFF64748B),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: personas.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 6),
+                  itemBuilder: (_, index) {
+                    final persona = personas[index];
+                    final isSelected = persona.id == currentId;
+                    return ListTile(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        side: BorderSide(
+                          color: isSelected
+                              ? persona.color
+                              : (isDark
+                                  ? Colors.white.withValues(alpha: 0.08)
+                                  : const Color(0xFFE2E8F0)),
+                          width: isSelected ? 1.5 : 1.0,
+                        ),
+                      ),
+                      tileColor: isSelected
+                          ? persona.color
+                              .withValues(alpha: isDark ? 0.18 : 0.08)
+                          : null,
+                      leading: CircleAvatar(
+                        backgroundColor: persona.color.withValues(alpha: 0.16),
+                        child: Icon(persona.icon, color: persona.color, size: 20),
+                      ),
+                      title: Text(
+                        persona.name,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14.5,
+                        ),
+                      ),
+                      subtitle: Text(
+                        persona.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      trailing: persona.id == 'custom'
+                          ? IconButton(
+                              tooltip: 'Edit custom prompt',
+                              icon: const Icon(Icons.edit_outlined, size: 18),
+                              onPressed: () {
+                                Navigator.of(ctx).pop();
+                                _showCustomPersonaDialog();
+                              },
+                            )
+                          : (isSelected
+                              ? Icon(Icons.check_circle_rounded,
+                                  color: persona.color, size: 20)
+                              : null),
+                      onTap: () async {
+                        Navigator.of(ctx).pop();
+                        if (persona.id == 'custom' &&
+                            widget.aiService.customPersonaPrompt.isEmpty) {
+                          await _showCustomPersonaDialog();
+                        } else {
+                          await widget.aiService.setActivePersona(persona.id);
+                          if (mounted) setState(() {});
+                        }
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _togglePinConversation(int id, bool currentlyPinned) async {
@@ -588,10 +760,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       );
     }
 
+    // Resolve active AI Persona (or Auto-Route to specialist in <1ms)
+    final selectedPersona = widget.aiService.activePersona;
+    final effectivePersona = PersonaRouter.resolvePersonaForPrompt(
+      selectedPersona: selectedPersona,
+      prompt: prompt,
+      customPrompt: widget.aiService.customPersonaPrompt,
+    );
+
+    if (ragSystemPrompt == null &&
+        selectedPersona.id == 'auto' &&
+        effectivePersona.id != 'default') {
+      _delegatedPersonas[assistantMessageIndex] = effectivePersona;
+    }
+
+    final effectiveSystemPrompt =
+        ragSystemPrompt ?? effectivePersona.systemPrompt;
+
     // Dynamically align conversation history budget with active contextSize
     final config = widget.aiService.inferenceConfig;
-    final effectiveSystemChars =
-        (ragSystemPrompt ?? LocalAiService.defaultChatSystemPrompt).length;
+    final effectiveSystemChars = effectiveSystemPrompt.length;
     final dynamicMaxChars = ChatUtils.computeMaxInputCharacters(
       contextSize: config.contextSize,
       maxGenerationTokens: config.maxTokens,
@@ -613,7 +801,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     try {
       await for (final chunk in widget.aiService.askStream(
         contextMessages,
-        systemPrompt: ragSystemPrompt,
+        systemPrompt: effectiveSystemPrompt,
+        temperature:
+            ragSystemPrompt == null ? effectivePersona.recommendedTemperature : null,
       )) {
         if (_isCancelled) break;
         responseBuffer.write(chunk);
@@ -1012,6 +1202,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   ),
                 ],
               ),
+            IconButton(
+              tooltip: 'AI Persona (${widget.aiService.activePersona.shortLabel})',
+              onPressed: _isThinking ? null : _showPersonaSelectorSheet,
+              icon: Icon(
+                widget.aiService.activePersona.icon,
+                color: widget.aiService.activePersona.id == 'default'
+                    ? null
+                    : widget.aiService.activePersona.color,
+              ),
+            ),
             IconButton(
               tooltip: 'Settings',
               onPressed: () {
@@ -1416,6 +1616,46 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                   ? CrossAxisAlignment.end
                                   : CrossAxisAlignment.start,
                               children: [
+                                if (!isMe && _delegatedPersonas[index] != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 4),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: _delegatedPersonas[index]!
+                                            .color
+                                            .withValues(alpha: isDark ? 0.2 : 0.1),
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(
+                                          color: _delegatedPersonas[index]!
+                                              .color
+                                              .withValues(alpha: 0.35),
+                                        ),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            _delegatedPersonas[index]!.icon,
+                                            size: 12,
+                                            color: _delegatedPersonas[index]!.color,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            'Handled by ${_delegatedPersonas[index]!.name}',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w600,
+                                              color: _delegatedPersonas[index]!.color,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
                                 Container(
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 16,

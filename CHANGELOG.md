@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.0] - 2026-11-24
+
+### Added
+- **Custom AI Personas & Auto Smart Routing**:
+  - Added `AiPersona` & `<1ms` offline `PersonaRouter` (`lib/features/chat/models/ai_persona.dart`) supporting **Auto (Smart Router)**, **Arivu Default**, **Code Mentor** (`temp: 0.2`), **Executive Assistant** (`temp: 0.3`), **Socratic Tutor** (`temp: 0.4`), **Creative Writer** (`temp: 0.75`), and user-defined **Custom Persona** (always preserving non-overridable core safety rules).
+  - Persisted active persona and custom system instructions locally in `persona_config.json` via `LocalAiService`.
+  - Added 1-tap **AI Persona** selector sheet in the `ChatScreen` AppBar and live **`Handled by <Persona>`** delegation badges above auto-routed assistant replies.
+
+- **Multi-Document Cross-Referencing (Document Intelligence v2)**:
+  - Added `SourcedDocumentChunk` model tagging every excerpt with its originating document ID, filename, and citation badge (`filename • Excerpt N`).
+  - Added global cross-document BM25 retrieval (`retrieveRelevantChunksAcrossDocuments`) with balanced round-robin lead chunk selection for comparison queries.
+  - Added **Compare / Multi-Select Mode** in `DocumentIntelligenceScreen` (AppBar button + card long-press) to select 2+ documents and launch `DocumentWorkspaceScreen` in Cross-Document Analysis mode.
+  - Added multi-doc one-tap workflows (*Compare Docs*, *Synthesize All*, *All Action Items*), filename-tagged tappable citation chips, and per-document filter chips in the Document Viewer tab.
+
+- **In-App "Benchmark My Phone" Diagnostics**:
+  - Added `BenchmarkScreen` (`lib/features/settings/presentation/benchmark_screen.dart`) accessible from **Settings → Benchmark My Phone**.
+  - Runs a standardized offline prompt (`maxTokens: 120, temperature: 0.1`) measuring live **Tokens/sec**, **Words/sec**, **Time-to-First-Token (TTFT)**, **Model Load Time**, and device speed rating (*Blazing Fast*, *Smooth*, *Moderate*, *Lightweight Model Recommended*).
+  - Added one-tap **Copy Report** exporting a Markdown table aligned with `docs/BENCHMARKS.md`.
+
+- **Pin & Rename Chat Sessions**:
+  - Upgraded SQLite schema to **v5** adding `is_pinned` column to `conversations`, ordering both normal history and search results by `is_pinned DESC, updated_at DESC`.
+  - Added `togglePinConversation` and `renameConversation` in `ChatDatabase` plus a 3-dot drawer menu (*Pin to top / Unpin*, *Rename*, *Delete*).
+
+### Fixed & Hardened
+- **P0 & P1 Stability Guardrails**:
+  - Added an async `Completer` concurrency mutex lock (`_acquireEngineLock` / `_releaseEngineLock`) in `LocalAiService` preventing concurrent native `llama.cpp` calls across Chat, Voice, Document AI, and Settings.
+  - Added dynamic context window budgeting (`ChatUtils.computeMaxInputCharacters`) aligned with `InferenceConfig.contextSize` (`1K`, `2K`, `4K`) to prevent KV-cache overflows on 1K Eco and unlock full history on 4K Deep.
+  - Offloaded PDF text extraction and semantic chunking to a background Dart `Isolate.run()` in `DocumentService.pickDocument()` to eliminate UI freezes / ANRs on large PDFs.
+  - Upgraded model downloads in `LocalAiService` to support **HTTP `Range` (`206 Partial Content`) resumable downloads**, `CancelToken` **Pause / Resume** UI in `ModelSetupScreen`, and automatic corruption cleanup.
+  - Added OS memory pressure observer (`WidgetsBindingObserver.didHaveMemoryPressure`) in `ArivuAiApp` and Low-RAM advisory banners in Settings.
+- **Production Release Hardening (P2)**:
+  - Enabled R8 code shrinking, obfuscation, and resource shrinking (`isMinifyEnabled`, `isShrinkResources`) with dedicated `android/app/proguard-rules.pro`.
+  - Added `android/key.properties.example` release signing template and `.gitignore` protection for keystores/credentials.
+  - Added Android 11+ `<queries>` package visibility in `AndroidManifest.xml` for `AppLauncherTool` and `AlarmTimerTool`.
+
+---
+
 ## [1.2.0] - 2026-11-21
 
 ### Added
