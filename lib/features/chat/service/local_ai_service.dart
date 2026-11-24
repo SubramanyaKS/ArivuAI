@@ -7,6 +7,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:llamadart/llamadart.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:arivu_ai/features/chat/models/ai_persona.dart';
 import 'package:arivu_ai/features/chat/models/chat_message.dart';
 import 'package:arivu_ai/features/chat/models/performance_metrics.dart';
 import 'package:arivu_ai/features/chat/service/think_filter.dart';
@@ -29,6 +30,16 @@ class LocalAiService extends ChangeNotifier {
 
   /// User-configurable inference parameters.
   InferenceConfig get inferenceConfig => _inferenceConfig;
+
+  String _activePersonaId = 'default';
+  String _customPersonaPrompt = '';
+
+  /// Currently selected AI persona (or Auto Smart Router).
+  AiPersona get activePersona =>
+      AiPersona.byId(_activePersonaId, customPrompt: _customPersonaPrompt);
+
+  /// User-authored custom persona instructions persisted on disk.
+  String get customPersonaPrompt => _customPersonaPrompt;
 
   PerformanceMetrics? _performanceMetrics;
   PerformanceMetrics? get performanceMetrics => _performanceMetrics;
@@ -239,6 +250,50 @@ class LocalAiService extends ChangeNotifier {
     return _inferenceConfig;
   }
 
+  /// Persists the selected persona ID and custom persona prompt to disk.
+  Future<void> setActivePersona(
+    String personaId, {
+    String? customPrompt,
+  }) async {
+    _activePersonaId = personaId;
+    if (customPrompt != null) {
+      _customPersonaPrompt = customPrompt.trim();
+    }
+    notifyListeners();
+    try {
+      final appDir = await getApplicationSupportDirectory();
+      final file = File('${appDir.path}/persona_config.json');
+      await file.writeAsString(
+        jsonEncode({
+          'activePersonaId': _activePersonaId,
+          'customPersonaPrompt': _customPersonaPrompt,
+        }),
+      );
+      debugPrint('[PERSONA] Saved active persona: $_activePersonaId');
+    } catch (e) {
+      debugPrint('[PERSONA] Failed to save persona config: $e');
+    }
+  }
+
+  /// Loads saved persona selection from disk.
+  Future<void> loadSavedPersonaConfig() async {
+    try {
+      final appDir = await getApplicationSupportDirectory();
+      final file = File('${appDir.path}/persona_config.json');
+      if (await file.exists()) {
+        final content = await file.readAsString();
+        if (content.trim().isNotEmpty) {
+          final map = jsonDecode(content) as Map<String, dynamic>;
+          _activePersonaId = (map['activePersonaId'] as String?) ?? 'default';
+          _customPersonaPrompt = (map['customPersonaPrompt'] as String?) ?? '';
+          notifyListeners();
+        }
+      }
+    } catch (e) {
+      debugPrint('[PERSONA] Failed to load persona config: $e');
+    }
+  }
+
   /// Updates inference parameters, persists to disk, and re-applies ModelParams if loaded.
   Future<void> updateInferenceConfig(InferenceConfig newConfig) async {
     final oldConfig = _inferenceConfig;
@@ -278,6 +333,7 @@ class LocalAiService extends ChangeNotifier {
   /// 3. Default catalog model if nothing is downloaded yet.
   Future<ModelSpec> resolveBootModel() async {
     await loadSavedInferenceConfig();
+    await loadSavedPersonaConfig();
     // 1. Check if user previously selected and saved an active model
     final savedId = await getSavedActiveModelId();
     if (savedId != null) {
