@@ -139,5 +139,105 @@ void main() {
         findsOneWidget,
       );
     });
+
+    test('Multi-document BM25 retrieval tags chunks with origin filenames and balances lead chunks', () {
+      final docA = AttachedDocument(
+        id: 'a',
+        name: 'contract_2025.pdf',
+        path: '/tmp/a.pdf',
+        sizeBytes: 1024,
+        fullText: 'Termination notice period is 30 days.',
+        chunks: const [
+          DocumentChunk(index: 0, text: 'Termination notice period is 30 days.'),
+          DocumentChunk(index: 1, text: 'Annual renewal fee is 500 USD.'),
+        ],
+      );
+      final docB = AttachedDocument(
+        id: 'b',
+        name: 'contract_2026.pdf',
+        path: '/tmp/b.pdf',
+        sizeBytes: 1024,
+        fullText: 'Termination notice period is 60 days.',
+        chunks: const [
+          DocumentChunk(index: 0, text: 'Termination notice period is 60 days.'),
+          DocumentChunk(index: 1, text: 'Annual renewal fee is 650 USD.'),
+        ],
+      );
+
+      final retrieved = DocumentService.instance.retrieveRelevantChunksAcrossDocuments(
+        'termination notice period',
+        [docA, docB],
+        maxChunks: 2,
+      );
+
+      expect(retrieved.length, 2);
+      expect(
+        retrieved.map((s) => s.documentName).toSet(),
+        containsAll(['contract_2025.pdf', 'contract_2026.pdf']),
+      );
+      expect(retrieved.first.citationLabel, contains('Excerpt 1'));
+
+      final multiPrompt = DocumentService.instance.buildMultiDocRagSystemPrompt(
+        documents: [docA, docB],
+        relevantChunks: retrieved,
+      );
+      expect(multiPrompt, contains('contract_2025.pdf'));
+      expect(multiPrompt, contains('contract_2026.pdf'));
+      expect(multiPrompt, contains('[Source: '));
+    });
+
+    testWidgets('Multi-select mode lets user select 2 documents and launch Cross-Document Analysis', (tester) async {
+      final aiService = LocalAiService();
+      final doc1 = AttachedDocument(
+        id: 'doc-1',
+        name: 'policy_v1.pdf',
+        path: '/tmp/v1.pdf',
+        sizeBytes: 2048,
+        fullText: 'Work from home allowed 2 days per week.',
+        chunks: const [
+          DocumentChunk(index: 0, text: 'Work from home allowed 2 days per week.'),
+        ],
+      );
+      final doc2 = AttachedDocument(
+        id: 'doc-2',
+        name: 'policy_v2.pdf',
+        path: '/tmp/v2.pdf',
+        sizeBytes: 2048,
+        fullText: 'Work from home allowed 3 days per week.',
+        chunks: const [
+          DocumentChunk(index: 0, text: 'Work from home allowed 3 days per week.'),
+        ],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DocumentIntelligenceScreen(
+            aiService: aiService,
+            initialDocuments: [doc1, doc2],
+          ),
+        ),
+      );
+
+      // Tap Compare to enter multi-select mode
+      expect(find.text('Compare'), findsOneWidget);
+      await tester.tap(find.text('Compare'));
+      await tester.pumpAndSettle();
+
+      // Select both documents
+      await tester.tap(find.text('policy_v1.pdf'));
+      await tester.tap(find.text('policy_v2.pdf'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Analyze 2 Docs'), findsOneWidget);
+
+      // Launch Cross-Document Analysis workspace
+      await tester.tap(find.text('Analyze 2 Docs'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Cross-Document Analysis'), findsOneWidget);
+      expect(find.text('Compare Docs'), findsOneWidget);
+      expect(find.text('Synthesize All'), findsOneWidget);
+      expect(find.text('All Action Items'), findsOneWidget);
+    });
   });
 }

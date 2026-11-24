@@ -10,7 +10,7 @@ import '../service/document_service.dart';
 class _DocChatEntry {
   final String role; // 'user' or 'assistant'
   final String content;
-  final List<DocumentChunk> citedChunks;
+  final List<SourcedDocumentChunk> citedChunks;
 
   const _DocChatEntry({
     required this.role,
@@ -19,19 +19,28 @@ class _DocChatEntry {
   });
 }
 
-/// Dedicated interactive workspace for analyzing a single document.
+/// Dedicated interactive workspace for analyzing one or multiple documents.
 /// Provides a 2-tab layout:
-/// 1. Ask Arivu (One-tap AI workflows + grounded RAG chat with tappable source citations)
-/// 2. Document Viewer (Offline full-text search & chunk explorer)
+/// 1. Ask Arivu (One-tap AI workflows + grounded single/multi-doc RAG chat with tappable source citations)
+/// 2. Document Viewer (Offline full-text search & chunk explorer with per-document filter chips)
 class DocumentWorkspaceScreen extends StatefulWidget {
-  const DocumentWorkspaceScreen({
+  DocumentWorkspaceScreen({
     super.key,
-    required this.document,
+    AttachedDocument? document,
+    List<AttachedDocument>? documents,
     required this.aiService,
-  });
+  })  : assert(
+          document != null || (documents != null && documents.isNotEmpty),
+          'Provide either a single document or a non-empty list of documents.',
+        ),
+        documents = documents != null && documents.isNotEmpty
+            ? documents
+            : [document!];
 
-  final AttachedDocument document;
+  final List<AttachedDocument> documents;
   final LocalAiService aiService;
+
+  bool get isMultiDoc => documents.length > 1;
 
   @override
   State<DocumentWorkspaceScreen> createState() =>
@@ -46,7 +55,9 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
   final ScrollController _chatScrollController = ScrollController();
 
   final List<_DocChatEntry> _entries = [];
-  List<DocumentChunk> _filteredChunks = [];
+  late List<SourcedDocumentChunk> _allSourcedChunks;
+  List<SourcedDocumentChunk> _filteredChunks = [];
+  String? _selectedDocFilterId; // null means "All Documents"
   bool _isGenerating = false;
   bool _isCancelled = false;
 
@@ -54,7 +65,16 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _filteredChunks = widget.document.chunks;
+    _allSourcedChunks = [
+      for (final doc in widget.documents)
+        for (final chunk in doc.chunks)
+          SourcedDocumentChunk(
+            documentId: doc.id,
+            documentName: doc.name,
+            chunk: chunk,
+          ),
+    ];
+    _filteredChunks = _allSourcedChunks;
   }
 
   @override
@@ -64,6 +84,23 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
     _docSearchController.dispose();
     _chatScrollController.dispose();
     super.dispose();
+  }
+
+  void _applyViewerFilter() {
+    final query = _docSearchController.text.trim().toLowerCase();
+    setState(() {
+      _filteredChunks = _allSourcedChunks.where((item) {
+        if (_selectedDocFilterId != null &&
+            item.documentId != _selectedDocFilterId) {
+          return false;
+        }
+        if (query.isNotEmpty &&
+            !item.chunk.text.toLowerCase().contains(query)) {
+          return false;
+        }
+        return true;
+      }).toList();
+    });
   }
 
   void _scrollToBottom() {
@@ -101,17 +138,38 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
 
     _promptController.clear();
 
-    // Retrieve top relevant chunks via offline BM25
-    final relevantChunks = DocumentService.instance.retrieveRelevantChunks(
-      trimmed,
-      widget.document.chunks,
-      maxChunks: 3,
-    );
+    final List<SourcedDocumentChunk> citedChunks;
+    final String systemPrompt;
 
-    final systemPrompt = DocumentService.instance.buildRagSystemPrompt(
-      document: widget.document,
-      relevantChunks: relevantChunks,
-    );
+    if (widget.isMultiDoc) {
+      citedChunks = DocumentService.instance.retrieveRelevantChunksAcrossDocuments(
+        trimmed,
+        widget.documents,
+        maxChunks: 4,
+      );
+      systemPrompt = DocumentService.instance.buildMultiDocRagSystemPrompt(
+        documents: widget.documents,
+        relevantChunks: citedChunks,
+      );
+    } else {
+      final doc = widget.documents.first;
+      final relevantChunks = DocumentService.instance.retrieveRelevantChunks(
+        trimmed,
+        doc.chunks,
+        maxChunks: 3,
+      );
+      citedChunks = relevantChunks
+          .map((c) => SourcedDocumentChunk(
+                documentId: doc.id,
+                documentName: doc.name,
+                chunk: c,
+              ))
+          .toList();
+      systemPrompt = DocumentService.instance.buildRagSystemPrompt(
+        document: doc,
+        relevantChunks: relevantChunks,
+      );
+    }
 
     setState(() {
       _entries.add(_DocChatEntry(
@@ -121,7 +179,7 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
       _entries.add(_DocChatEntry(
         role: 'assistant',
         content: '',
-        citedChunks: relevantChunks,
+        citedChunks: citedChunks,
       ));
       _isGenerating = true;
       _isCancelled = false;
@@ -153,7 +211,7 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
           _entries[assistantIndex] = _DocChatEntry(
             role: 'assistant',
             content: buffer.toString(),
-            citedChunks: relevantChunks,
+            citedChunks: citedChunks,
           );
         });
         _scrollToBottom();
@@ -166,7 +224,7 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
             content: _isCancelled
                 ? 'Generation stopped.'
                 : 'No response generated. Please try rephrasing your question.',
-            citedChunks: relevantChunks,
+            citedChunks: citedChunks,
           );
         });
       }
@@ -176,7 +234,7 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
           _entries[assistantIndex] = _DocChatEntry(
             role: 'assistant',
             content: 'Error analyzing document: $e',
-            citedChunks: relevantChunks,
+            citedChunks: citedChunks,
           );
         });
       }
@@ -189,7 +247,7 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
     }
   }
 
-  void _showCitationSheet(DocumentChunk chunk) {
+  void _showCitationSheet(SourcedDocumentChunk sourced) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     showModalBottomSheet(
       context: context,
@@ -218,7 +276,7 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
-                      'Excerpt ${chunk.index + 1}',
+                      'Excerpt ${sourced.chunk.index + 1}',
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         color: Color(0xFF4F46E5),
@@ -229,14 +287,15 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      widget.document.name,
+                      sourced.documentName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 13,
+                        fontWeight: FontWeight.w600,
                         color: isDark
-                            ? const Color(0xFF94A3B8)
-                            : const Color(0xFF64748B),
+                            ? const Color(0xFFE2E8F0)
+                            : const Color(0xFF334155),
                       ),
                     ),
                   ),
@@ -244,7 +303,7 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
                     icon: const Icon(Icons.copy_rounded, size: 18),
                     tooltip: 'Copy excerpt',
                     onPressed: () {
-                      Clipboard.setData(ClipboardData(text: chunk.text));
+                      Clipboard.setData(ClipboardData(text: sourced.chunk.text));
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text('Excerpt copied to clipboard'),
@@ -260,7 +319,7 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
                 child: SingleChildScrollView(
                   controller: controller,
                   child: SelectableText(
-                    chunk.text,
+                    sourced.chunk.text,
                     style: TextStyle(
                       fontSize: 14.5,
                       height: 1.6,
@@ -281,6 +340,12 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final titleText = widget.isMultiDoc
+        ? 'Cross-Document Analysis'
+        : widget.documents.first.name;
+    final subtitleText = widget.isMultiDoc
+        ? '${widget.documents.length} documents • ${_allSourcedChunks.length} total sections'
+        : '${widget.documents.first.sizeFormatted} • ${_allSourcedChunks.length} sections';
 
     return Scaffold(
       backgroundColor:
@@ -292,13 +357,13 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              widget.document.name,
+              titleText,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             Text(
-              '${widget.document.sizeFormatted} • ${widget.document.chunks.length} sections',
+              subtitleText,
               style: TextStyle(
                 fontSize: 12,
                 color: isDark
@@ -331,10 +396,9 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
   }
 
   Widget _buildAskTab(bool isDark) {
-    final doc = widget.document;
     return Column(
       children: [
-        // One-Tap Quick Document Actions
+        // One-Tap Quick Document Actions (adapts for single vs multi-doc)
         Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -351,47 +415,86 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
-              children: [
-                _buildQuickActionChip(
-                  icon: Icons.summarize_rounded,
-                  label: 'Summarize',
-                  color: const Color(0xFF4F46E5),
-                  onTap: () => _askDocument(
-                    DocumentService.instance.buildSummaryPrompt(doc),
-                    displayLabel: '📝 Summarize this document',
-                  ),
-                ),
-                const SizedBox(width: 8),
-                _buildQuickActionChip(
-                  icon: Icons.lightbulb_outline_rounded,
-                  label: 'Key Takeaways',
-                  color: const Color(0xFFF59E0B),
-                  onTap: () => _askDocument(
-                    DocumentService.instance.buildKeyTakeawaysPrompt(doc),
-                    displayLabel: '💡 Extract key takeaways',
-                  ),
-                ),
-                const SizedBox(width: 8),
-                _buildQuickActionChip(
-                  icon: Icons.quiz_outlined,
-                  label: 'Generate Q&A',
-                  color: const Color(0xFF10B981),
-                  onTap: () => _askDocument(
-                    DocumentService.instance.buildQaGenerationPrompt(doc),
-                    displayLabel: '❓ Generate Q&A study pairs',
-                  ),
-                ),
-                const SizedBox(width: 8),
-                _buildQuickActionChip(
-                  icon: Icons.checklist_rounded,
-                  label: 'Action Items',
-                  color: const Color(0xFFEC4899),
-                  onTap: () => _askDocument(
-                    DocumentService.instance.buildActionItemsPrompt(doc),
-                    displayLabel: '✅ Extract action items',
-                  ),
-                ),
-              ],
+              children: widget.isMultiDoc
+                  ? [
+                      _buildQuickActionChip(
+                        icon: Icons.compare_arrows_rounded,
+                        label: 'Compare Docs',
+                        color: const Color(0xFF4F46E5),
+                        onTap: () => _askDocument(
+                          DocumentService.instance
+                              .buildCompareDocumentsPrompt(widget.documents),
+                          displayLabel: '⚖️ Compare selected documents',
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _buildQuickActionChip(
+                        icon: Icons.hub_outlined,
+                        label: 'Synthesize All',
+                        color: const Color(0xFF10B981),
+                        onTap: () => _askDocument(
+                          DocumentService.instance
+                              .buildCrossSynthesisPrompt(widget.documents),
+                          displayLabel: '🧩 Synthesize unified summary',
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _buildQuickActionChip(
+                        icon: Icons.checklist_rounded,
+                        label: 'All Action Items',
+                        color: const Color(0xFFEC4899),
+                        onTap: () => _askDocument(
+                          DocumentService.instance
+                              .buildMultiDocActionItemsPrompt(widget.documents),
+                          displayLabel: '✅ Consolidate all action items',
+                        ),
+                      ),
+                    ]
+                  : [
+                      _buildQuickActionChip(
+                        icon: Icons.summarize_rounded,
+                        label: 'Summarize',
+                        color: const Color(0xFF4F46E5),
+                        onTap: () => _askDocument(
+                          DocumentService.instance
+                              .buildSummaryPrompt(widget.documents.first),
+                          displayLabel: '📝 Summarize this document',
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _buildQuickActionChip(
+                        icon: Icons.lightbulb_outline_rounded,
+                        label: 'Key Takeaways',
+                        color: const Color(0xFFF59E0B),
+                        onTap: () => _askDocument(
+                          DocumentService.instance
+                              .buildKeyTakeawaysPrompt(widget.documents.first),
+                          displayLabel: '💡 Extract key takeaways',
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _buildQuickActionChip(
+                        icon: Icons.quiz_outlined,
+                        label: 'Generate Q&A',
+                        color: const Color(0xFF10B981),
+                        onTap: () => _askDocument(
+                          DocumentService.instance
+                              .buildQaGenerationPrompt(widget.documents.first),
+                          displayLabel: '❓ Generate Q&A study pairs',
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _buildQuickActionChip(
+                        icon: Icons.checklist_rounded,
+                        label: 'Action Items',
+                        color: const Color(0xFFEC4899),
+                        onTap: () => _askDocument(
+                          DocumentService.instance
+                              .buildActionItemsPrompt(widget.documents.first),
+                          displayLabel: '✅ Extract action items',
+                        ),
+                      ),
+                    ],
             ),
           ),
         ),
@@ -412,15 +515,19 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
                                 .withValues(alpha: isDark ? 0.18 : 0.1),
                             shape: BoxShape.circle,
                           ),
-                          child: const Icon(
-                            Icons.document_scanner_rounded,
+                          child: Icon(
+                            widget.isMultiDoc
+                                ? Icons.compare_arrows_rounded
+                                : Icons.document_scanner_rounded,
                             size: 36,
-                            color: Color(0xFF4F46E5),
+                            color: const Color(0xFF4F46E5),
                           ),
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          'Ready to analyze ${doc.name}',
+                          widget.isMultiDoc
+                              ? 'Cross-Referencing ${widget.documents.length} Documents'
+                              : 'Ready to analyze ${widget.documents.first.name}',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 16,
@@ -431,8 +538,29 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
                           ),
                         ),
                         const SizedBox(height: 8),
+                        if (widget.isMultiDoc) ...[
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            alignment: WrapAlignment.center,
+                            children: widget.documents
+                                .map(
+                                  (d) => Chip(
+                                    visualDensity: VisualDensity.compact,
+                                    label: Text(
+                                      d.name,
+                                      style: const TextStyle(fontSize: 11.5),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
                         Text(
-                          'Tap a quick action above or ask any specific question. Answers are strictly grounded in this document with tappable citations.',
+                          widget.isMultiDoc
+                              ? 'Ask questions or tap Compare Docs above to synthesize insights across all selected files with filename-tagged citations.'
+                              : 'Tap a quick action above or ask any specific question. Answers are strictly grounded in this document with tappable citations.',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 13.5,
@@ -481,7 +609,9 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
                     textInputAction: TextInputAction.send,
                     onSubmitted: (val) => _askDocument(val),
                     decoration: InputDecoration(
-                      hintText: 'Ask anything about this document...',
+                      hintText: widget.isMultiDoc
+                          ? 'Ask across all ${widget.documents.length} documents...'
+                          : 'Ask anything about this document...',
                       filled: true,
                       fillColor: isDark
                           ? const Color(0xFF1E293B)
@@ -594,7 +724,9 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
                           ),
                           const SizedBox(width: 10),
                           Text(
-                            'Analyzing document...',
+                            widget.isMultiDoc
+                                ? 'Cross-referencing documents...'
+                                : 'Analyzing document...',
                             style: TextStyle(
                               fontSize: 13.5,
                               color: isDark
@@ -620,8 +752,8 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 ...entry.citedChunks.map(
-                  (chunk) => InkWell(
-                    onTap: () => _showCitationSheet(chunk),
+                  (sourced) => InkWell(
+                    onTap: () => _showCitationSheet(sourced),
                     borderRadius: BorderRadius.circular(12),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
@@ -646,7 +778,9 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
                           ),
                           const SizedBox(width: 4),
                           Text(
-                            'Source: Excerpt ${chunk.index + 1}',
+                            widget.isMultiDoc
+                                ? sourced.citationLabel
+                                : 'Source: Excerpt ${sourced.chunk.index + 1}',
                             style: TextStyle(
                               fontSize: 11.5,
                               fontWeight: FontWeight.w600,
@@ -693,27 +827,53 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
   Widget _buildViewerTab(bool isDark) {
     return Column(
       children: [
+        if (widget.isMultiDoc)
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: Row(
+              children: [
+                ChoiceChip(
+                  label: const Text('All Docs'),
+                  selected: _selectedDocFilterId == null,
+                  onSelected: (_) {
+                    _selectedDocFilterId = null;
+                    _applyViewerFilter();
+                  },
+                ),
+                const SizedBox(width: 8),
+                ...widget.documents.map(
+                  (doc) => Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text(doc.name),
+                      selected: _selectedDocFilterId == doc.id,
+                      onSelected: (_) {
+                        _selectedDocFilterId = doc.id;
+                        _applyViewerFilter();
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
           child: TextField(
             controller: _docSearchController,
-            onChanged: (val) {
-              setState(() {
-                _filteredChunks = DocumentService.instance
-                    .searchChunks(val, widget.document.chunks);
-              });
-            },
+            onChanged: (_) => _applyViewerFilter(),
             decoration: InputDecoration(
-              hintText: 'Search keywords inside document...',
+              hintText: widget.isMultiDoc
+                  ? 'Search keywords across selected documents...'
+                  : 'Search keywords inside document...',
               prefixIcon: const Icon(Icons.search_rounded, size: 20),
               suffixIcon: _docSearchController.text.isNotEmpty
                   ? IconButton(
                       icon: const Icon(Icons.clear_rounded, size: 18),
                       onPressed: () {
                         _docSearchController.clear();
-                        setState(() {
-                          _filteredChunks = widget.document.chunks;
-                        });
+                        _applyViewerFilter();
                       },
                     )
                   : null,
@@ -733,7 +893,7 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
           child: Row(
             children: [
               Text(
-                'Showing ${_filteredChunks.length} of ${widget.document.chunks.length} sections',
+                'Showing ${_filteredChunks.length} of ${_allSourcedChunks.length} sections',
                 style: TextStyle(
                   fontSize: 12,
                   color: isDark
@@ -760,7 +920,7 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
                   padding: const EdgeInsets.fromLTRB(16, 6, 16, 20),
                   itemCount: _filteredChunks.length,
                   itemBuilder: (context, idx) {
-                    final chunk = _filteredChunks[idx];
+                    final sourced = _filteredChunks[idx];
                     return Card(
                       margin: const EdgeInsets.only(bottom: 12),
                       elevation: 0,
@@ -781,29 +941,36 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 3,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF4F46E5)
-                                        .withValues(alpha: 0.14),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    'Excerpt ${chunk.index + 1}',
-                                    style: TextStyle(
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.bold,
-                                      color: isDark
-                                          ? const Color(0xFF818CF8)
-                                          : const Color(0xFF4F46E5),
+                                Flexible(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 3,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF4F46E5)
+                                          .withValues(alpha: 0.14),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      widget.isMultiDoc
+                                          ? sourced.citationLabel
+                                          : 'Excerpt ${sourced.chunk.index + 1}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.bold,
+                                        color: isDark
+                                            ? const Color(0xFF818CF8)
+                                            : const Color(0xFF4F46E5),
+                                      ),
                                     ),
                                   ),
                                 ),
+                                const SizedBox(width: 8),
                                 Text(
-                                  '~${chunk.tokenEstimate} tokens',
+                                  '~${sourced.chunk.tokenEstimate} tokens',
                                   style: TextStyle(
                                     fontSize: 11,
                                     color: isDark
@@ -815,7 +982,7 @@ class _DocumentWorkspaceScreenState extends State<DocumentWorkspaceScreen>
                             ),
                             const SizedBox(height: 10),
                             SelectableText(
-                              chunk.text,
+                              sourced.chunk.text,
                               style: TextStyle(
                                 fontSize: 14,
                                 height: 1.55,

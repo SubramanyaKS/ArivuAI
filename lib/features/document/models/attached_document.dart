@@ -14,6 +14,23 @@ class DocumentChunk {
   int get tokenEstimate => (text.length / 4).ceil();
 }
 
+/// Associates a [DocumentChunk] with its originating document metadata
+/// for multi-document cross-referencing and source citations.
+class SourcedDocumentChunk {
+  final String documentId;
+  final String documentName;
+  final DocumentChunk chunk;
+
+  const SourcedDocumentChunk({
+    required this.documentId,
+    required this.documentName,
+    required this.chunk,
+  });
+
+  /// Human-readable citation badge label (e.g. `report.pdf • Excerpt 2`).
+  String get citationLabel => '$documentName • Excerpt ${chunk.index + 1}';
+}
+
 /// Represents an attached local document (PDF, TXT, or MD) for on-device RAG.
 class AttachedDocument {
   final String id;

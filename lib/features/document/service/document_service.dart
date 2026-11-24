@@ -374,4 +374,165 @@ class DocumentService {
   String buildActionItemsPrompt(AttachedDocument doc) {
     return 'Identify and list all action items, recommendations, deadlines, requirements, or next steps mentioned in "${doc.name}". If none are present, clearly state that.';
   }
+
+  /// High-speed cross-document BM25 relevance retriever.
+  /// Aggregates chunks across multiple [documents], ranks them globally, and
+  /// returns up to [maxChunks] [SourcedDocumentChunk] items tagged with their origin file.
+  List<SourcedDocumentChunk> retrieveRelevantChunksAcrossDocuments(
+    String query,
+    List<AttachedDocument> documents, {
+    int maxChunks = 4,
+  }) {
+    final allSourced = <SourcedDocumentChunk>[];
+    for (final doc in documents) {
+      for (final chunk in doc.chunks) {
+        allSourced.add(SourcedDocumentChunk(
+          documentId: doc.id,
+          documentName: doc.name,
+          chunk: chunk,
+        ));
+      }
+    }
+
+    if (allSourced.isEmpty) return [];
+    if (allSourced.length <= maxChunks) return allSourced;
+
+    final queryTokens = _tokenize(query);
+
+    // For broad synthesis/comparison queries without specific keywords,
+    // pick balanced lead chunks round-robin across every selected document.
+    List<SourcedDocumentChunk> balancedLeadChunks() {
+      final result = <SourcedDocumentChunk>[];
+      var depth = 0;
+      while (result.length < maxChunks) {
+        var addedAny = false;
+        for (final doc in documents) {
+          if (depth < doc.chunks.length && result.length < maxChunks) {
+            result.add(SourcedDocumentChunk(
+              documentId: doc.id,
+              documentName: doc.name,
+              chunk: doc.chunks[depth],
+            ));
+            addedAny = true;
+          }
+        }
+        if (!addedAny) break;
+        depth++;
+      }
+      return result;
+    }
+
+    if (queryTokens.isEmpty) {
+      return balancedLeadChunks();
+    }
+
+    final totalChunks = allSourced.length;
+    final chunkTokenMaps = <Map<String, int>>[];
+    final docFrequency = <String, int>{};
+
+    for (final item in allSourced) {
+      final tokens = _tokenize(item.chunk.text);
+      final freq = <String, int>{};
+      for (final t in tokens) {
+        freq[t] = (freq[t] ?? 0) + 1;
+      }
+      chunkTokenMaps.add(freq);
+      for (final t in freq.keys) {
+        docFrequency[t] = (docFrequency[t] ?? 0) + 1;
+      }
+    }
+
+    double totalTokens = 0;
+    for (final map in chunkTokenMaps) {
+      totalTokens += map.values.fold(0, (a, b) => a + b);
+    }
+    final avgDocLen = totalTokens == 0 ? 1.0 : totalTokens / totalChunks;
+
+    const k1 = 1.2;
+    const b = 0.75;
+    final scored = <MapEntry<SourcedDocumentChunk, double>>[];
+
+    for (var i = 0; i < allSourced.length; i++) {
+      final item = allSourced[i];
+      final freqMap = chunkTokenMaps[i];
+      final docLen = freqMap.values.fold(0, (a, b) => a + b);
+
+      double score = 0.0;
+      for (final qToken in queryTokens) {
+        final tf = freqMap[qToken] ?? 0;
+        if (tf == 0) continue;
+        final df = docFrequency[qToken] ?? 1;
+        final idf = math.log(1 + (totalChunks - df + 0.5) / (df + 0.5));
+        score += idf *
+            (tf * (k1 + 1)) /
+            (tf + k1 * (1 - b + b * (docLen / avgDocLen)));
+      }
+
+      if (item.chunk.text.toLowerCase().contains(query.trim().toLowerCase())) {
+        score += 3.0;
+      }
+
+      scored.add(MapEntry(item, score));
+    }
+
+    scored.sort((a, b) => b.value.compareTo(a.value));
+
+    if (scored.first.value <= 0.0) {
+      return balancedLeadChunks();
+    }
+
+    return scored.take(maxChunks).map((e) => e.key).toList();
+  }
+
+  /// Builds a grounded multi-document RAG system prompt with per-file citations.
+  String buildMultiDocRagSystemPrompt({
+    required List<AttachedDocument> documents,
+    required List<SourcedDocumentChunk> relevantChunks,
+  }) {
+    final docNames = documents.map((d) => '"${d.name}"').join(', ');
+    final buffer = StringBuffer();
+    buffer.writeln(
+      'You are Arivu AI, an offline Document Intelligence assistant cross-referencing multiple documents: $docNames.',
+    );
+    buffer.writeln('Strict Rules:');
+    buffer.writeln(
+      '1. Use ONLY the facts directly stated in the MULTI-DOCUMENT CONTEXT below to answer or compare.',
+    );
+    buffer.writeln(
+      '2. Always cite the source filename and excerpt (e.g. [${documents.first.name} • Excerpt 1]) when referencing facts.',
+    );
+    buffer.writeln(
+      '3. Clearly highlight similarities, differences, or contradictions between documents when relevant.',
+    );
+    buffer.writeln(
+      '4. If the answer is not in the provided excerpts, state clearly: "I cannot find that information in the selected documents."',
+    );
+    buffer.writeln();
+    buffer.writeln('=== MULTI-DOCUMENT CONTEXT ===');
+    for (final sourced in relevantChunks) {
+      buffer.writeln('[Source: ${sourced.citationLabel}]');
+      buffer.writeln(sourced.chunk.text.trim());
+      buffer.writeln();
+    }
+    buffer.writeln('==============================');
+    return buffer.toString();
+  }
+
+  /// Builds a one-tap comparison prompt across multiple documents.
+  String buildCompareDocumentsPrompt(List<AttachedDocument> docs) {
+    final names = docs.map((d) => '"${d.name}"').join(', ');
+    return 'Compare and contrast $names. Highlight key similarities, major differences, and any conflicting details, citing each document clearly.';
+  }
+
+  /// Builds a one-tap unified synthesis prompt across multiple documents.
+  String buildCrossSynthesisPrompt(List<AttachedDocument> docs) {
+    final names = docs.map((d) => '"${d.name}"').join(', ');
+    return 'Synthesize a unified executive summary combining the core insights from $names. Group related themes together and cite the source document for each point.';
+  }
+
+  /// Builds a one-tap consolidated action items prompt across multiple documents.
+  String buildMultiDocActionItemsPrompt(List<AttachedDocument> docs) {
+    final names = docs.map((d) => '"${d.name}"').join(', ');
+    return 'Extract and consolidate all action items, deadlines, obligations, and next steps across $names. Label each item with the document it came from.';
+  }
 }

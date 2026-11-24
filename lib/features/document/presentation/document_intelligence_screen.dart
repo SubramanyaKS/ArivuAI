@@ -5,8 +5,8 @@ import '../service/document_service.dart';
 import 'document_workspace_screen.dart';
 
 /// Dedicated Document Intelligence Hub (Knowledge Shelf).
-/// Allows users to upload, persist, organize, and analyze PDF, TXT, and Markdown
-/// files completely offline using local BM25 RAG and on-device LLM inference.
+/// Allows users to upload, persist, organize, and analyze single or multiple
+/// PDF, TXT, and Markdown files completely offline using local BM25 RAG.
 class DocumentIntelligenceScreen extends StatefulWidget {
   const DocumentIntelligenceScreen({
     super.key,
@@ -27,6 +27,8 @@ class DocumentIntelligenceScreen extends StatefulWidget {
 class _DocumentIntelligenceScreenState
     extends State<DocumentIntelligenceScreen> {
   List<AttachedDocument> _documents = [];
+  final Set<String> _selectedIds = {};
+  bool _isSelectionMode = false;
   bool _isLoading = true;
   bool _isUploading = false;
   String _searchQuery = '';
@@ -87,6 +89,45 @@ class _DocumentIntelligenceScreenState
     }
   }
 
+  void _toggleSelectionMode() {
+    setState(() {
+      _isSelectionMode = !_isSelectionMode;
+      if (!_isSelectionMode) {
+        _selectedIds.clear();
+      }
+    });
+  }
+
+  void _toggleDocSelection(String id) {
+    setState(() {
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+      } else {
+        _selectedIds.add(id);
+      }
+    });
+  }
+
+  void _openMultiDocWorkspace() {
+    final selectedDocs =
+        _documents.where((d) => _selectedIds.contains(d.id)).toList();
+    if (selectedDocs.length < 2) return;
+
+    setState(() {
+      _isSelectionMode = false;
+      _selectedIds.clear();
+    });
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => DocumentWorkspaceScreen(
+          documents: selectedDocs,
+          aiService: widget.aiService,
+        ),
+      ),
+    );
+  }
+
   Future<void> _confirmDelete(AttachedDocument doc) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -117,6 +158,7 @@ class _DocumentIntelligenceScreenState
       if (!mounted) return;
       setState(() {
         _documents.removeWhere((d) => d.id == doc.id);
+        _selectedIds.remove(doc.id);
       });
     }
   }
@@ -128,7 +170,6 @@ class _DocumentIntelligenceScreenState
           document: doc,
           aiService: widget.aiService,
         ),
-
       ),
     );
   }
@@ -160,48 +201,75 @@ class _DocumentIntelligenceScreenState
       appBar: AppBar(
         backgroundColor: isDark ? const Color(0xFF0F172A) : Colors.white,
         elevation: 0.5,
-        title: const Column(
+        title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Document Intelligence',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              _isSelectionMode
+                  ? '${_selectedIds.length} Selected'
+                  : 'Document Intelligence',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             Text(
-              '100% Offline Knowledge Shelf',
-              style: TextStyle(fontSize: 12, color: Color(0xFF10B981)),
+              _isSelectionMode
+                  ? 'Select 2+ documents to cross-reference'
+                  : '100% Offline Knowledge Shelf',
+              style: const TextStyle(fontSize: 12, color: Color(0xFF10B981)),
             ),
           ],
         ),
         actions: [
-          if (_isUploading)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
-              child: Center(
-                child: SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
+          if (_documents.length >= 2)
+            TextButton.icon(
+              onPressed: _toggleSelectionMode,
+              icon: Icon(
+                _isSelectionMode
+                    ? Icons.close_rounded
+                    : Icons.compare_arrows_rounded,
+                size: 18,
               ),
-            )
-          else
-            IconButton(
-              tooltip: 'Upload PDF, TXT, or Markdown',
-              onPressed: _uploadDocument,
-              icon: const Icon(Icons.upload_file_rounded),
+              label: Text(_isSelectionMode ? 'Cancel' : 'Compare'),
             ),
+          if (!_isSelectionMode) ...[
+            if (_isUploading)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              )
+            else
+              IconButton(
+                tooltip: 'Upload PDF, TXT, or Markdown',
+                onPressed: _uploadDocument,
+                icon: const Icon(Icons.upload_file_rounded),
+              ),
+          ],
         ],
       ),
-      floatingActionButton: _documents.isNotEmpty
-          ? FloatingActionButton.extended(
-              backgroundColor: const Color(0xFF4F46E5),
-              foregroundColor: Colors.white,
-              onPressed: _isUploading ? null : _uploadDocument,
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('Add Document'),
-            )
-          : null,
+      floatingActionButton: _isSelectionMode
+          ? (_selectedIds.length >= 2
+              ? FloatingActionButton.extended(
+                  backgroundColor: const Color(0xFF4F46E5),
+                  foregroundColor: Colors.white,
+                  onPressed: _openMultiDocWorkspace,
+                  icon: const Icon(Icons.compare_arrows_rounded),
+                  label: Text('Analyze ${_selectedIds.length} Docs'),
+                )
+              : null)
+          : (_documents.isNotEmpty
+              ? FloatingActionButton.extended(
+                  backgroundColor: const Color(0xFF4F46E5),
+                  foregroundColor: Colors.white,
+                  onPressed: _isUploading ? null : _uploadDocument,
+                  icon: const Icon(Icons.add_rounded),
+                  label: const Text('Add Document'),
+                )
+              : null),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _documents.isEmpty
@@ -257,6 +325,7 @@ class _DocumentIntelligenceScreenState
   Widget _buildDocumentCard(AttachedDocument doc, bool isDark) {
     final ext = doc.extension.isEmpty ? 'TXT' : doc.extension.toUpperCase();
     final color = _badgeColor(doc.extension);
+    final isSelected = _selectedIds.contains(doc.id);
     final wordCount = doc.fullText.trim().isEmpty
         ? 0
         : doc.fullText.trim().split(RegExp(r'\s+')).length;
@@ -264,22 +333,54 @@ class _DocumentIntelligenceScreenState
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 0,
-      color: isDark ? const Color(0xFF131B2E) : Colors.white,
+      color: isSelected
+          ? const Color(0xFF4F46E5).withValues(alpha: isDark ? 0.2 : 0.07)
+          : (isDark ? const Color(0xFF131B2E) : Colors.white),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
         side: BorderSide(
-          color: isDark
-              ? Colors.white.withValues(alpha: 0.08)
-              : const Color(0xFFE2E8F0),
+          color: isSelected
+              ? const Color(0xFF4F46E5)
+              : (isDark
+                  ? Colors.white.withValues(alpha: 0.08)
+                  : const Color(0xFFE2E8F0)),
+          width: isSelected ? 1.5 : 1.0,
         ),
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: () => _openWorkspace(doc),
+        onTap: () {
+          if (_isSelectionMode) {
+            _toggleDocSelection(doc.id);
+          } else {
+            _openWorkspace(doc);
+          }
+        },
+        onLongPress: _documents.length >= 2
+            ? () {
+                setState(() {
+                  _isSelectionMode = true;
+                  _selectedIds.add(doc.id);
+                });
+              }
+            : null,
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Row(
             children: [
+              if (_isSelectionMode) ...[
+                Icon(
+                  isSelected
+                      ? Icons.check_circle_rounded
+                      : Icons.radio_button_unchecked_rounded,
+                  color: isSelected
+                      ? const Color(0xFF4F46E5)
+                      : (isDark
+                          ? const Color(0xFF64748B)
+                          : const Color(0xFF94A3B8)),
+                ),
+                const SizedBox(width: 12),
+              ],
               Container(
                 width: 48,
                 height: 48,
@@ -330,23 +431,25 @@ class _DocumentIntelligenceScreenState
                   ],
                 ),
               ),
-              IconButton(
-                tooltip: 'Remove from library',
-                icon: Icon(
-                  Icons.delete_outline_rounded,
-                  size: 20,
-                  color: isDark
-                      ? const Color(0xFF94A3B8)
-                      : const Color(0xFF64748B),
+              if (!_isSelectionMode) ...[
+                IconButton(
+                  tooltip: 'Remove from library',
+                  icon: Icon(
+                    Icons.delete_outline_rounded,
+                    size: 20,
+                    color: isDark
+                        ? const Color(0xFF94A3B8)
+                        : const Color(0xFF64748B),
+                  ),
+                  onPressed: () => _confirmDelete(doc),
                 ),
-                onPressed: () => _confirmDelete(doc),
-              ),
-              Icon(
-                Icons.chevron_right_rounded,
-                color: isDark
-                    ? const Color(0xFF64748B)
-                    : const Color(0xFF94A3B8),
-              ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: isDark
+                      ? const Color(0xFF64748B)
+                      : const Color(0xFF94A3B8),
+                ),
+              ],
             ],
           ),
         ),
@@ -386,7 +489,7 @@ class _DocumentIntelligenceScreenState
             ),
             const SizedBox(height: 10),
             Text(
-              'Upload PDFs, text notes, or Markdown files to summarize, extract key takeaways, generate Q&A flashcards, and chat with verified citations—100% offline on your device.',
+              'Upload PDFs, text notes, or Markdown files to summarize, cross-reference multiple documents, generate Q&A flashcards, and chat with verified citations—100% offline.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 14,
